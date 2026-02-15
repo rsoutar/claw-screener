@@ -1,6 +1,6 @@
 ---
 name: claw-screener
-description: Stock screener using technical and fundamental analysis. Use when user asks about finding oversold stocks, screening for quality investments, Warren Buffett-style analysis, or analyzing individual stocks. Supports US (S&P 500) and Thai (SET) markets. Triggers on keywords: stock, ticker, screening, oversold, Buffett, fundamental, technical analysis, quality stocks, buy signals.
+description: "Stock screener using technical and fundamental analysis. Use when user asks about finding oversold stocks, screening for quality investments, Warren Buffett-style analysis, or analyzing individual stocks. Supports US (S&P 500) and Thai (SET) markets. Triggers on keywords: stock, ticker, screening, oversold, Buffett, fundamental, technical analysis, quality stocks, buy signals."
 ---
 
 # Claw-Screener
