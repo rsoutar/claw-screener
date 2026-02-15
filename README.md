@@ -1,8 +1,3 @@
----
-name: claw-screener
-description: "Stock screener using technical and fundamental analysis. Use when user asks about finding oversold stocks, screening for quality investments, Warren Buffett-style analysis, or analyzing individual stocks. Supports US (S&P 500) and Thai (SET) markets. Triggers on keywords: stock, ticker, screening, oversold, Buffett, fundamental, technical analysis, quality stocks, buy signals."
----
-
 # Claw-Screener
 
 Stock screener combining technical analysis (Williams %R oversold signals) with Warren Buffett-style fundamental analysis using SEC data. Supports US (S&P 500) and Thai (SET) markets.
@@ -32,6 +27,7 @@ bun run src/screening.ts [options]
 | `--format` | Output: `text`, `json`, `telegram` | `text` |
 
 **Examples:**
+
 ```bash
 # US market, default settings
 bun run src/screening.ts
@@ -66,6 +62,7 @@ bun run src/technicalOnly.ts [options]
 | `--format` | Output: `text`, `json`, `telegram` | `text` |
 
 **Examples:**
+
 ```bash
 # Default scan
 bun run src/technicalOnly.ts
@@ -91,6 +88,7 @@ bun run src/analyze.ts <ticker> [options]
 | `--format` | Output: `text`, `json`, `telegram` | `text` |
 
 **Examples:**
+
 ```bash
 # Analyze a US stock
 bun run src/analyze.ts AAPL
@@ -109,18 +107,18 @@ bun run src/analyze.ts PTT.BK
 
 The fundamental analysis evaluates stocks against Warren Buffett's criteria:
 
-| # | Formula | Target | Description |
-|---|---------|--------|-------------|
-| 1 | Cash Test | > Total Debt | Cash covers all debt |
-| 2 | Debt-to-Equity | < 0.5 | Low leverage |
-| 3 | Return on Equity | > 15% | Efficient use of capital |
-| 4 | Current Ratio | > 1.5 | Short-term liquidity |
-| 5 | Operating Margin | > 12% | Operational efficiency |
-| 6 | Asset Turnover | > 0.5 | Asset efficiency |
-| 7 | Interest Coverage | > 3x | Ability to pay interest |
-| 8 | Earnings Stability | Positive | Consistent profitability |
-| 9 | Free Cash Flow | > 0 | Cash generation |
-| 10 | Capital Allocation | > 15% ROE | Management effectiveness |
+| #   | Formula            | Target       | Description              |
+| --- | ------------------ | ------------ | ------------------------ |
+| 1   | Cash Test          | > Total Debt | Cash covers all debt     |
+| 2   | Debt-to-Equity     | < 0.5        | Low leverage             |
+| 3   | Return on Equity   | > 15%        | Efficient use of capital |
+| 4   | Current Ratio      | > 1.5        | Short-term liquidity     |
+| 5   | Operating Margin   | > 12%        | Operational efficiency   |
+| 6   | Asset Turnover     | > 0.5        | Asset efficiency         |
+| 7   | Interest Coverage  | > 3x         | Ability to pay interest  |
+| 8   | Earnings Stability | Positive     | Consistent profitability |
+| 9   | Free Cash Flow     | > 0          | Cash generation          |
+| 10  | Capital Allocation | > 15% ROE    | Management effectiveness |
 
 **Scoring:** Each passing formula earns 1 point. Maximum score: 10/10.
 
@@ -133,12 +131,14 @@ The fundamental analysis evaluates stocks against Warren Buffett's criteria:
 - Overbought: > -20 (potential sell signal)
 
 The screener finds stocks where:
+
 - Williams %R < -80 (oversold)
 - Combined with Buffett score >= min-score (for US market)
 
 ## Output Formats
 
 ### Text (Default)
+
 ```
 📊 Combined Quality Screening (US (S&P 500))
 Technical: Oversold signals (Williams %R < -80)
@@ -158,6 +158,7 @@ Top 10 Opportunities:
 ```
 
 ### JSON
+
 ```json
 {
   "totalScanned": 503,
@@ -170,6 +171,7 @@ Top 10 Opportunities:
 ```
 
 ### Telegram
+
 ```
 📊 Combined Quality Screening (US (S&P 500))
 Scanned: 503 stocks
