@@ -9,7 +9,10 @@
     "dev": "bun run src/screening.ts",
     "screening": "bun run src/screening.ts",
     "technical": "bun run src/technicalOnly.ts",
-    "analyze": "bun run src/analyze.ts"
+    "analyze": "bun run src/analyze.ts",
+    "watchlist:add": "bun run src/watchList.ts add",
+    "watchlist:remove": "bun run src/watchList.ts remove",
+    "watchlist:list": "bun run src/watchList.ts list"
   },
   "dependencies": {
     "sql.js": "^1.14.0",

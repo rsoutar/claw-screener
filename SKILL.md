@@ -7,6 +7,8 @@ metadata:
     emoji: "📊"
     requires:
       env: []
+      files:
+        - ~/.claw-screener-watchlist.json
 ---
 
 # Claw-Screener
@@ -94,6 +96,48 @@ bun run src/analyze.ts GOOGL --format json
 bun run src/analyze.ts PTT.BK
 ```
 
+### 4. Watchlist Management
+Track stocks you're interested in and get alerts when they become oversold or overbought.
+
+**Command:**
+```
+bun run src/watchList.ts <command> [options]
+```
+
+**Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `add <ticker>` | Add a stock to your watchlist |
+| `remove <ticker>` | Remove a stock from your watchlist |
+| `list` | Show all watched stocks |
+
+**Options:**
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--market us\|th` | Market: `us` (US) or `th` (Thai) | `us` |
+| `--notes '...'` | Optional notes for the stock | - |
+| `--alert-threshold` | Williams %R threshold for alerts | - |
+
+**Examples:**
+```
+bun run src/watchList.ts add AAPL
+bun run src/watchList.ts add AAPL --market us --notes 'Big tech'
+bun run src/watchList.ts add PTT.BK --market th
+bun run src/watchList.ts remove AAPL
+bun run src/watchList.ts list
+bun run src/watchList.ts list --market us
+```
+
+**NPM Scripts:**
+```
+npm run watchlist:add <ticker> [options]
+npm run watchlist:remove <ticker>
+npm run watchlist:list
+```
+
+**Storage:** Watchlist is saved to `~/.claw-screener-watchlist.json`
+
 ## Buffett's 10 Formulas
 
 The fundamental analysis evaluates stocks against Warren Buffett's criteria:
@@ -142,10 +186,13 @@ bun install
 ## NPM Scripts
 
 ```bash
-npm run dev          # Run screening (alias for bun run src/screening.ts)
-npm run screening    # Run combined screening
-npm run technical    # Run technical-only scan
-npm run analyze      # Analyze a stock (requires ticker argument)
+npm run dev              # Run screening (alias for bun run src/screening.ts)
+npm run screening        # Run combined screening
+npm run technical        # Run technical-only scan
+npm run analyze          # Analyze a stock (requires ticker argument)
+npm run watchlist:add    # Add stock to watchlist
+npm run watchlist:remove # Remove stock from watchlist
+npm run watchlist:list   # List watched stocks
 ```
 
 ## Output Format Examples
