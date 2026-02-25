@@ -103,6 +103,52 @@ bun run src/analyze.ts GOOGL --format json
 bun run src/analyze.ts PTT.BK
 ```
 
+### 4. Compounding Machine (`compoundingMachine.ts`)
+
+Screens for high-quality compounders using Carlson filters:
+
+- Revenue and net income YoY growth trend
+- ROIC > 15%
+- Shares outstanding shrinking over 3 years (buybacks)
+- Operating margin > 20%
+- Includes yield-vs-5y and simple 10-year DCF valuation context
+
+```bash
+bun run src/compoundingMachine.ts [options]
+```
+
+**Options:**
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--market` | Market universe: `us` or `bk` | `us` |
+| `--tickers` | Comma-separated tickers (overrides market universe) | - |
+| `--max-tickers` | Limit number of tickers scanned | all |
+| `--top-n` | Number of passing stocks to print | `25` |
+| `--concurrency` | Parallel fetch workers | `4` |
+| `--format` | Output: `text` or `json` | `text` |
+| `--db-path` | SQLite cache path | `sec_cache.db` |
+| `--ttl-days` | Cache TTL in days | `7` |
+| `--min-roic` | ROIC threshold (%) | `15` |
+| `--min-op-margin` | Operating margin threshold (%) | `20` |
+| `--min-buyback` | Required 3Y share reduction (%) | `2` |
+| `--show-rejected` | Include failed tickers with reasons in output | off |
+
+**Examples:**
+
+```bash
+# Run against S&P 500 universe
+bun run src/compoundingMachine.ts
+
+# Quick sample run
+bun run src/compoundingMachine.ts --tickers AAPL,MSFT,NVDA --top-n 10
+
+# JSON output for automation
+bun run src/compoundingMachine.ts --format json --max-tickers 100
+
+# Show filter-fail reasons
+bun run src/compoundingMachine.ts --tickers PLTR --show-rejected
+```
+
 ## Buffett's 10 Formulas
 
 The fundamental analysis evaluates stocks against Warren Buffett's criteria:
@@ -203,4 +249,5 @@ npm run dev          # Run screening (alias for bun run src/screening.ts)
 npm run screening    # Run combined screening
 npm run technical    # Run technical-only scan
 npm run analyze      # Analyze a stock (requires ticker argument)
+npm run compounder   # Run Compounding Machine screener
 ```
