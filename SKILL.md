@@ -9,6 +9,10 @@ metadata:
       env: []
       files:
         - ~/.claw-screener-watchlist.json
+        - sec_cache.db
+        - price_cache.db
+      runtime: bun >=1.3.1
+      config_paths: ~/.claw-screener-watchlist.json
 ---
 
 # Claw-Screener
@@ -179,13 +183,6 @@ bun run src/watchList.ts list
 bun run src/watchList.ts list --market us
 ```
 
-**NPM Scripts:**
-```
-npm run watchlist:add <ticker> [options]
-npm run watchlist:remove <ticker>
-npm run watchlist:list
-```
-
 **Storage:** Watchlist is saved to `~/.claw-screener-watchlist.json`
 
 ## Buffett's 10 Formulas
@@ -229,21 +226,62 @@ Combined score = (Technical Score × 0.3) + (Fundamental Score × 0.7)
 
 ## Installation
 
+### Runtime Requirements
+
+- **Bun** (>=1.3.1) - Required runtime for executing TypeScript scripts
+- Node.js is NOT required as Bun provides all necessary runtime functionality
+
+### Install Bun
+
+If you don't have Bun installed, run:
+
+```bash
+# macOS/Linux
+curl -fsSL https://bun.sh/install | bash
+
+# Windows (PowerShell)
+iwr https://bun.sh/install -outfile "install.ps1"; ./install.ps1
+```
+
+### Install Dependencies
+
 ```bash
 bun install
 ```
 
-## NPM Scripts
+## File Persistence
+
+This skill creates and manages the following files:
+
+| File | Location | Purpose | TTL |
+|------|----------|---------|-----|
+| Watchlist | `~/.claw-screener-watchlist.json` | User's stock watchlist | Permanent |
+| SEC Cache | `sec_cache.db` | Cached SEC EDGAR financial data | 7 days (default) |
+| Price Cache | `price_cache.db` | Cached stock price data | 1 day (default) |
+
+### Cache Management
+
+- Cache files are automatically created on first run
+- Use `--ttl-days` flag with compounding machine to adjust cache TTL
+- Cache files can be deleted to force fresh data fetch
+- Cache improves performance significantly on subsequent runs
+
+### Notes
+- First run on full US universe can take ~20-30+ minutes (expected behavior)
+- Subsequent runs are much faster due to caching
+- For quick tests, use `--max-tickers 50` or specific `--tickers`
+
+## Bun Scripts
 
 ```bash
-npm run dev              # Run screening (alias for bun run src/screening.ts)
-npm run screening        # Run combined screening
-npm run technical        # Run technical-only scan
-npm run analyze          # Analyze a stock (requires ticker argument)
-npm run compounder       # Run Compounding Machine screener
-npm run watchlist:add    # Add stock to watchlist
-npm run watchlist:remove # Remove stock from watchlist
-npm run watchlist:list   # List watched stocks
+bun run dev              # Run screening (alias for bun run src/screening.ts)
+bun run screening        # Run combined screening
+bun run technical        # Run technical-only scan
+bun run analyze          # Analyze a stock (requires ticker argument)
+bun run compounder       # Run Compounding Machine screener
+bun run watchlist:add    # Add stock to watchlist
+bun run watchlist:remove # Remove stock from watchlist
+bun run watchlist:list   # List watched stocks
 ```
 
 ## Output Format Examples
