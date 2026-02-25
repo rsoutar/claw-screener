@@ -134,6 +134,18 @@ bun run src/compoundingMachine.ts --format json --max-tickers 100
 bun run src/compoundingMachine.ts --tickers PLTR --show-rejected
 ```
 
+**Runtime / Caching Notes:**
+- First uncached run on full US universe can take ~20-30+ minutes.
+- This is expected: each ticker requires multiple Yahoo fundamentals/quote requests and retry backoff for rate-limit resilience.
+- Subsequent runs are much faster due to SQLite caching (`sec_cache.db`, TTL default 7 days).
+- For quick checks, run smaller scans first (for example `--max-tickers 50` or specific `--tickers`).
+
+**Agent Guidance for User Messaging:**
+- If user runs full-universe Compounding Machine scan, explicitly warn that initial run may take ~20-30 minutes.
+- Suggest quick-test alternatives while waiting:
+  - `bun run src/compoundingMachine.ts --max-tickers 50`
+  - `bun run src/compoundingMachine.ts --tickers AAPL,MSFT,NVDA`
+
 ### 5. Watchlist Management
 Track stocks you're interested in and get alerts when they become oversold or overbought.
 
