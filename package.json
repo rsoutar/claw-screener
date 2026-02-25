@@ -10,6 +10,7 @@
     "screening": "bun run src/screening.ts",
     "technical": "bun run src/technicalOnly.ts",
     "analyze": "bun run src/analyze.ts",
+    "compounder": "bun run src/compoundingMachine.ts",
     "watchlist:add": "bun run src/watchList.ts add",
     "watchlist:remove": "bun run src/watchList.ts remove",
     "watchlist:list": "bun run src/watchList.ts list"

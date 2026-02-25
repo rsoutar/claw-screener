@@ -20,6 +20,7 @@ A stock screener that combines technical analysis (Williams %R oversold signals)
 Use this skill when you need to:
 - Find oversold stocks with strong fundamentals
 - Screen for quality stocks using Buffett's 10 formulas
+- Screen for long-term compounders using Carlson filters (ROIC, growth, buybacks)
 - Analyze individual stocks for investment decisions
 - Get daily stock screening results in text, JSON, or Telegram format
 
@@ -96,7 +97,56 @@ bun run src/analyze.ts GOOGL --format json
 bun run src/analyze.ts PTT.BK
 ```
 
-### 4. Watchlist Management
+### 4. Compounding Machine
+Screens for "compounders" using Carlson-style filters:
+- Revenue and net income YoY trend strength
+- ROIC threshold (default >15%)
+- Share count reduction over 3 years (buyback signal)
+- Operating margin threshold (default >20%)
+- Includes current yield vs 5-year average and a simple 10-year DCF context
+
+**Command:**
+```
+bun run src/compoundingMachine.ts [options]
+```
+
+**Options:**
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--market` | Market universe: `us` or `bk` | `us` |
+| `--tickers` | Comma-separated tickers (overrides market universe) | - |
+| `--max-tickers` | Limit universe size | all |
+| `--top-n` | Number of passing stocks to show | `25` |
+| `--concurrency` | Parallel fetch workers | `4` |
+| `--format` | Output: `text` or `json` | `text` |
+| `--db-path` | SQLite cache path | `sec_cache.db` |
+| `--ttl-days` | Cache TTL in days | `7` |
+| `--min-roic` | ROIC threshold (%) | `15` |
+| `--min-op-margin` | Operating margin threshold (%) | `20` |
+| `--min-buyback` | Required 3Y share reduction (%) | `2` |
+| `--show-rejected` | Include failed tickers with reasons in output | off |
+
+**Examples:**
+```
+bun run src/compoundingMachine.ts
+bun run src/compoundingMachine.ts --tickers AAPL,MSFT,NVDA --top-n 10
+bun run src/compoundingMachine.ts --format json --max-tickers 100
+bun run src/compoundingMachine.ts --tickers PLTR --show-rejected
+```
+
+**Runtime / Caching Notes:**
+- First uncached run on full US universe can take ~20-30+ minutes.
+- This is expected: each ticker requires multiple Yahoo fundamentals/quote requests and retry backoff for rate-limit resilience.
+- Subsequent runs are much faster due to SQLite caching (`sec_cache.db`, TTL default 7 days).
+- For quick checks, run smaller scans first (for example `--max-tickers 50` or specific `--tickers`).
+
+**Agent Guidance for User Messaging:**
+- If user runs full-universe Compounding Machine scan, explicitly warn that initial run may take ~20-30 minutes.
+- Suggest quick-test alternatives while waiting:
+  - `bun run src/compoundingMachine.ts --max-tickers 50`
+  - `bun run src/compoundingMachine.ts --tickers AAPL,MSFT,NVDA`
+
+### 5. Watchlist Management
 Track stocks you're interested in and get alerts when they become oversold or overbought.
 
 **Command:**
@@ -190,6 +240,7 @@ npm run dev              # Run screening (alias for bun run src/screening.ts)
 npm run screening        # Run combined screening
 npm run technical        # Run technical-only scan
 npm run analyze          # Analyze a stock (requires ticker argument)
+npm run compounder       # Run Compounding Machine screener
 npm run watchlist:add    # Add stock to watchlist
 npm run watchlist:remove # Remove stock from watchlist
 npm run watchlist:list   # List watched stocks
