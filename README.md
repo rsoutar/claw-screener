@@ -242,12 +242,12 @@ Combined score = (Technical Score × 0.3) + (Fundamental Score × 0.7)
 - Technical Score: (Williams %R + 100) / 100
 - Fundamental Score: (Buffett Score / 10) × 100
 
-## npm Scripts
+## Bun Scripts
 
 ```bash
-npm run dev          # Run screening (alias for bun run src/screening.ts)
-npm run screening    # Run combined screening
-npm run technical    # Run technical-only scan
-npm run analyze      # Analyze a stock (requires ticker argument)
-npm run compounder   # Run Compounding Machine screener
+bun run dev          # Run screening (alias for bun run src/screening.ts)
+bun run screening    # Run combined screening
+bun run technical    # Run technical-only scan
+bun run analyze      # Analyze a stock (requires ticker argument)
+bun run compounder   # Run Compounding Machine screener
 ```
