@@ -338,7 +338,7 @@ async function main() {
   if (command === "add") {
     const ticker = args[1];
     if (!ticker) {
-      console.error("Usage: bun run src/watchList.ts add <ticker> [--market us|th] [--notes '...'] [--alert-threshold -80]");
+      console.error("Usage: npm run watchlist:add -- <ticker> [--market us|th] [--notes '...'] [--alert-threshold -80]");
       process.exit(1);
     }
 
@@ -368,7 +368,7 @@ async function main() {
   } else if (command === "remove") {
     const ticker = args[1];
     if (!ticker) {
-      console.error("Usage: bun run src/watchList.ts remove <ticker> [--market us|th]");
+      console.error("Usage: npm run watchlist:remove -- <ticker> [--market us|th]");
       process.exit(1);
     }
 
@@ -414,9 +414,9 @@ async function main() {
 📊 Watchlist Manager
 
 Usage:
-  bun run src/watchList.ts add <ticker> [options]
-  bun run src/watchList.ts remove <ticker> [options]
-  bun run src/watchList.ts list [options]
+  npm run watchlist:add -- <ticker> [options]
+  npm run watchlist:remove -- <ticker> [options]
+  npm run watchlist:list -- [options]
 
 Commands:
   add <ticker>      Add a stock to watchlist
@@ -430,16 +430,16 @@ Options:
   --help, -h           Show this help message
 
 Examples:
-  bun run src/watchList.ts add AAPL
-  bun run src/watchList.ts add AAPL --market us --notes 'Big tech'
-  bun run src/watchList.ts add PTT.BK --market th
-  bun run src/watchList.ts remove AAPL
-  bun run src/watchList.ts list
-  bun run src/watchList.ts list --market us
+  npm run watchlist:add -- AAPL
+  npm run watchlist:add -- AAPL --market us --notes 'Big tech'
+  npm run watchlist:add -- PTT.BK --market th
+  npm run watchlist:remove -- AAPL
+  npm run watchlist:list
+  npm run watchlist:list -- --market us
 `);
   } else {
     console.error(`Unknown command: ${command}`);
-    console.error("Use 'bun run src/watchList.ts --help' for usage information");
+    console.error("Use 'npm run watchlist:list -- --help' for usage information");
     process.exit(1);
   }
 }

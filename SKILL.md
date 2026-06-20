@@ -1,8 +1,15 @@
 ---
 name: claw-screener
-description: Stock screener combining Williams %R oversold signals with Warren Buffett-style fundamental analysis. Supports US (S&P 500) and Thai (SET) markets.
+description: Stock screener combining Williams %R oversold signals with Warren Buffett-style fundamental analysis. Supports US (S&P 500) and Thai (SET) markets. Use when screening stocks, finding oversold quality picks, running Buffett formula analysis, Carlson compounder scans, or managing a stock watchlist.
 homepage: https://github.com/rsoutar/claw-screener
+version: 1.0.0
+platforms: [macos, linux]
+compatibility: Requires Node.js >=20, npm, and network access for SEC EDGAR and Yahoo Finance data.
 metadata:
+  openclaw:
+    emoji: "📊"
+    requires:
+      bins: ["node"]
   clawdbot:
     emoji: "📊"
     requires:
@@ -11,15 +18,25 @@ metadata:
         - ~/.claw-screener-watchlist.json
         - sec_cache.db
         - price_cache.db
-      runtime: bun >=1.3.1
+      runtime: node >=20
       config_paths: ~/.claw-screener-watchlist.json
+  hermes:
+    emoji: "📊"
+    tags: [stocks, finance, screening, buffett, technical-analysis]
+    category: finance
+    requires_toolsets: [terminal]
+    config:
+      - key: repo_path
+        description: Path to the claw-screener repository root (directory containing package.json)
+        default: "~/.hermes/skills/finance/claw-screener"
+        prompt: Where is the claw-screener repository cloned?
 ---
 
 # Claw-Screener
 
 A stock screener that combines technical analysis (Williams %R oversold signals) with Warren Buffett-style fundamental analysis using SEC data. Supports US (S&P 500) and Thai (SET) markets.
 
-## When to Use This Skill
+## When to Use
 
 Use this skill when you need to:
 - Find oversold stocks with strong fundamentals
@@ -27,6 +44,45 @@ Use this skill when you need to:
 - Screen for long-term compounders using Carlson filters (ROIC, growth, buybacks)
 - Analyze individual stocks for investment decisions
 - Get daily stock screening results in text, JSON, or Telegram format
+
+## Installation
+
+This skill ships the full repository — scripts, dependencies, and caches live in the repo root. Run all commands from that directory.
+
+### OpenClaw / Clawdbot
+
+```bash
+openclaw skills install git:rsoutar/claw-screener@main
+cd {baseDir} && npm install
+```
+
+### Hermes Agent
+
+Option A — clone into the Hermes skills directory (recommended):
+
+```bash
+git clone https://github.com/rsoutar/claw-screener.git ~/.hermes/skills/finance/claw-screener
+cd ~/.hermes/skills/finance/claw-screener && npm install
+```
+
+Option B — point Hermes at an existing clone via `~/.hermes/config.yaml`:
+
+```yaml
+skills:
+  external_dirs:
+    - ~/Projects/claw-screener
+```
+
+Then run `npm install` in that directory. Invoke with `/claw-screener` or ask Hermes to screen stocks.
+
+If the repo lives elsewhere, set `skills.config.claw-screener.repo_path` in `config.yaml` (or run `hermes skills config claw-screener`).
+
+### Working Directory
+
+Before running any command below, `cd` to the repository root:
+
+- **OpenClaw:** `cd {baseDir}`
+- **Hermes:** `cd` to `skills.config.claw-screener.repo_path` (default `~/.hermes/skills/finance/claw-screener`)
 
 ## Tools
 
@@ -37,7 +93,7 @@ Finds stocks that are both technically oversold (Williams %R < -80) and fundamen
 
 **Command:**
 ```
-bun run src/screening.ts [options]
+npm run screening [options]
 ```
 
 **Options:**
@@ -50,11 +106,11 @@ bun run src/screening.ts [options]
 
 **Examples:**
 ```
-bun run src/screening.ts
-bun run src/screening.ts --market us --min-score 7 --top-n 5
-bun run src/screening.ts --market bk
-bun run src/screening.ts --format json
-bun run src/screening.ts --format telegram
+npm run screening
+npm run screening -- --market us --min-score 7 --top-n 5
+npm run screening -- --market bk
+npm run screening -- --format json
+npm run screening -- --format telegram
 ```
 
 ### 2. Technical Only Scan
@@ -62,7 +118,7 @@ Fast oversold scan using Williams %R indicator only. No SEC data required. Works
 
 **Command:**
 ```
-bun run src/technicalOnly.ts [options]
+npm run technical [options]
 ```
 
 **Options:**
@@ -75,9 +131,9 @@ bun run src/technicalOnly.ts [options]
 
 **Examples:**
 ```
-bun run src/technicalOnly.ts
-bun run src/technicalOnly.ts --threshold -70 --top-n 50
-bun run src/technicalOnly.ts --market bk
+npm run technical
+npm run technical -- --threshold -70 --top-n 50
+npm run technical -- --market bk
 ```
 
 ### 3. Analyze Stock
@@ -85,7 +141,7 @@ Deep analysis of a single stock using Buffett's 10 formulas.
 
 **Command:**
 ```
-bun run src/analyze.ts <ticker> [options]
+npm run analyze -- <ticker> [options]
 ```
 
 **Options:**
@@ -95,10 +151,10 @@ bun run src/analyze.ts <ticker> [options]
 
 **Examples:**
 ```
-bun run src/analyze.ts AAPL
-bun run src/analyze.ts MSFT --format telegram
-bun run src/analyze.ts GOOGL --format json
-bun run src/analyze.ts PTT.BK
+npm run analyze -- AAPL
+npm run analyze -- MSFT --format telegram
+npm run analyze -- GOOGL --format json
+npm run analyze -- PTT.BK
 ```
 
 ### 4. Compounding Machine
@@ -111,7 +167,7 @@ Screens for "compounders" using Carlson-style filters:
 
 **Command:**
 ```
-bun run src/compoundingMachine.ts [options]
+npm run compounder [options]
 ```
 
 **Options:**
@@ -132,10 +188,10 @@ bun run src/compoundingMachine.ts [options]
 
 **Examples:**
 ```
-bun run src/compoundingMachine.ts
-bun run src/compoundingMachine.ts --tickers AAPL,MSFT,NVDA --top-n 10
-bun run src/compoundingMachine.ts --format json --max-tickers 100
-bun run src/compoundingMachine.ts --tickers PLTR --show-rejected
+npm run compounder
+npm run compounder -- --tickers AAPL,MSFT,NVDA --top-n 10
+npm run compounder -- --format json --max-tickers 100
+npm run compounder -- --tickers PLTR --show-rejected
 ```
 
 **Runtime / Caching Notes:**
@@ -147,15 +203,15 @@ bun run src/compoundingMachine.ts --tickers PLTR --show-rejected
 **Agent Guidance for User Messaging:**
 - If user runs full-universe Compounding Machine scan, explicitly warn that initial run may take ~20-30 minutes.
 - Suggest quick-test alternatives while waiting:
-  - `bun run src/compoundingMachine.ts --max-tickers 50`
-  - `bun run src/compoundingMachine.ts --tickers AAPL,MSFT,NVDA`
+  - `npm run compounder -- --max-tickers 50`
+  - `npm run compounder -- --tickers AAPL,MSFT,NVDA`
 
 ### 5. Watchlist Management
 Track stocks you're interested in and get alerts when they become oversold or overbought.
 
 **Command:**
 ```
-bun run src/watchList.ts <command> [options]
+npm run watchlist:<command> -- [options]
 ```
 
 **Commands:**
@@ -175,12 +231,12 @@ bun run src/watchList.ts <command> [options]
 
 **Examples:**
 ```
-bun run src/watchList.ts add AAPL
-bun run src/watchList.ts add AAPL --market us --notes 'Big tech'
-bun run src/watchList.ts add PTT.BK --market th
-bun run src/watchList.ts remove AAPL
-bun run src/watchList.ts list
-bun run src/watchList.ts list --market us
+npm run watchlist:add -- AAPL
+npm run watchlist:add -- AAPL --market us --notes 'Big tech'
+npm run watchlist:add -- PTT.BK --market th
+npm run watchlist:remove -- AAPL
+npm run watchlist:list
+npm run watchlist:list -- --market us
 ```
 
 **Storage:** Watchlist is saved to `~/.claw-screener-watchlist.json`
@@ -224,29 +280,16 @@ Combined score = (Technical Score × 0.3) + (Fundamental Score × 0.7)
 - **US Stocks**: SEC EDGAR for fundamentals, Yahoo Finance for prices
 - **Thai Stocks**: Yahoo Finance only (no SEC data available)
 
-## Installation
+## Runtime Requirements
 
-### Runtime Requirements
-
-- **Bun** (>=1.3.1) - Required runtime for executing TypeScript scripts
-- Node.js is NOT required as Bun provides all necessary runtime functionality
-
-### Install Bun
-
-If you don't have Bun installed, run:
-
-```bash
-# macOS/Linux
-curl -fsSL https://bun.sh/install | bash
-
-# Windows (PowerShell)
-iwr https://bun.sh/install -outfile "install.ps1"; ./install.ps1
-```
+- **Node.js** (>=20) and **npm** — required to run TypeScript scripts via `tsx`
 
 ### Install Dependencies
 
+From the repository root:
+
 ```bash
-bun install
+npm install
 ```
 
 ## File Persistence
@@ -271,18 +314,20 @@ This skill creates and manages the following files:
 - Subsequent runs are much faster due to caching
 - For quick tests, use `--max-tickers 50` or specific `--tickers`
 
-## Bun Scripts
+## npm Scripts
 
 ```bash
-bun run dev              # Run screening (alias for bun run src/screening.ts)
-bun run screening        # Run combined screening
-bun run technical        # Run technical-only scan
-bun run analyze          # Analyze a stock (requires ticker argument)
-bun run compounder       # Run Compounding Machine screener
-bun run watchlist:add    # Add stock to watchlist
-bun run watchlist:remove # Remove stock from watchlist
-bun run watchlist:list   # List watched stocks
+npm run dev              # Run screening (alias for npm run screening)
+npm run screening        # Run combined screening
+npm run technical        # Run technical-only scan
+npm run analyze          # Analyze a stock (requires ticker argument)
+npm run compounder       # Run Compounding Machine screener
+npm run watchlist:add    # Add stock to watchlist
+npm run watchlist:remove # Remove stock from watchlist
+npm run watchlist:list   # List watched stocks
 ```
+
+Pass CLI flags after `--`, for example: `npm run screening -- --market us --min-score 7`
 
 ## Output Format Examples
 
@@ -316,3 +361,21 @@ Quality (Buffett ≥5/10): 8
 1. **AAPL** — Combined: 85% | Buffett: 8/10 | WR: -82.3
 2. **MSFT** — Combined: 79% | Buffett: 7/10 | WR: -85.1
 ```
+
+## Pitfalls
+
+- Full US universe compounding scans take ~20–30 minutes on first uncached run; use `--max-tickers` or `--tickers` for quick tests.
+- Thai market (`bk`) uses Yahoo Finance only — no SEC fundamental data.
+- Commands fail if run outside the repo root or before `npm install`.
+- Yahoo rate limits can slow bulk scans; SQLite caches (`sec_cache.db`, `price_cache.db`) speed up repeat runs.
+
+## Verification
+
+From the repository root:
+
+```bash
+npm run analyze -- AAPL --format json
+npm run technical -- --market us --top-n 3
+```
+
+A successful run prints JSON analysis or a short list of oversold tickers.

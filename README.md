@@ -5,8 +5,38 @@ Stock screener combining technical analysis (Williams %R oversold signals) with 
 ## Installation
 
 ```bash
-bun install
+npm install
 ```
+
+## Agent Skills
+
+This repo includes a [Agent Skills](https://agentskills.io/specification)-compatible `SKILL.md` for AI agents.
+
+### OpenClaw / Clawdbot
+
+```bash
+openclaw skills install git:rsoutar/claw-screener@main
+cd <skill-dir> && npm install
+```
+
+### Hermes Agent
+
+Clone the full repo (the skill needs the TypeScript sources, not just `SKILL.md`):
+
+```bash
+git clone https://github.com/rsoutar/claw-screener.git ~/.hermes/skills/finance/claw-screener
+cd ~/.hermes/skills/finance/claw-screener && npm install
+```
+
+Or add an existing clone to `~/.hermes/config.yaml`:
+
+```yaml
+skills:
+  external_dirs:
+    - ~/Projects/claw-screener
+```
+
+Then use `/claw-screener` in chat, or ask Hermes to screen or analyze stocks. See `SKILL.md` for full command reference.
 
 ## Scripts
 
@@ -15,7 +45,7 @@ bun install
 Runs both technical and fundamental analysis to find quality oversold stocks.
 
 ```bash
-bun run src/screening.ts [options]
+npm run screening [options]
 ```
 
 **Options:**
@@ -30,19 +60,19 @@ bun run src/screening.ts [options]
 
 ```bash
 # US market, default settings
-bun run src/screening.ts
+npm run screening
 
 # US market, stricter fundamental requirements
-bun run src/screening.ts --market us --min-score 7 --top-n 5
+npm run screening -- --market us --min-score 7 --top-n 5
 
 # Thai market (technical only, no SEC data)
-bun run src/screening.ts --market bk
+npm run screening -- --market bk
 
 # JSON output for automation
-bun run src/screening.ts --format json
+npm run screening -- --format json
 
 # Telegram format for messaging apps
-bun run src/screening.ts --format telegram
+npm run screening -- --format telegram
 ```
 
 ### 2. Technical Only (`technicalOnly.ts`)
@@ -50,7 +80,7 @@ bun run src/screening.ts --format telegram
 Fast oversold scan using Williams %R indicator only. No SEC data required.
 
 ```bash
-bun run src/technicalOnly.ts [options]
+npm run technical [options]
 ```
 
 **Options:**
@@ -65,13 +95,13 @@ bun run src/technicalOnly.ts [options]
 
 ```bash
 # Default scan
-bun run src/technicalOnly.ts
+npm run technical
 
 # More oversold stocks
-bun run src/technicalOnly.ts --threshold -70 --top-n 50
+npm run technical -- --threshold -70 --top-n 50
 
 # Thai market
-bun run src/technicalOnly.ts --market bk
+npm run technical -- --market bk
 ```
 
 ### 3. Analyze Stock (`analyze.ts`)
@@ -79,7 +109,7 @@ bun run src/technicalOnly.ts --market bk
 Deep analysis of a single stock using Buffett's 10 formulas.
 
 ```bash
-bun run src/analyze.ts <ticker> [options]
+npm run analyze -- <ticker> [options]
 ```
 
 **Options:**
@@ -91,16 +121,16 @@ bun run src/analyze.ts <ticker> [options]
 
 ```bash
 # Analyze a US stock
-bun run src/analyze.ts AAPL
+npm run analyze -- AAPL
 
 # Analyze with Telegram format
-bun run src/analyze.ts MSFT --format telegram
+npm run analyze -- MSFT --format telegram
 
 # JSON for programmatic use
-bun run src/analyze.ts GOOGL --format json
+npm run analyze -- GOOGL --format json
 
 # Analyze a Thai stock (uses Yahoo Finance)
-bun run src/analyze.ts PTT.BK
+npm run analyze -- PTT.BK
 ```
 
 ### 4. Compounding Machine (`compoundingMachine.ts`)
@@ -114,7 +144,7 @@ Screens for high-quality compounders using Carlson filters:
 - Includes yield-vs-5y and simple 10-year DCF valuation context
 
 ```bash
-bun run src/compoundingMachine.ts [options]
+npm run compounder [options]
 ```
 
 **Options:**
@@ -137,16 +167,16 @@ bun run src/compoundingMachine.ts [options]
 
 ```bash
 # Run against S&P 500 universe
-bun run src/compoundingMachine.ts
+npm run compounder
 
 # Quick sample run
-bun run src/compoundingMachine.ts --tickers AAPL,MSFT,NVDA --top-n 10
+npm run compounder -- --tickers AAPL,MSFT,NVDA --top-n 10
 
 # JSON output for automation
-bun run src/compoundingMachine.ts --format json --max-tickers 100
+npm run compounder -- --format json --max-tickers 100
 
 # Show filter-fail reasons
-bun run src/compoundingMachine.ts --tickers PLTR --show-rejected
+npm run compounder -- --tickers PLTR --show-rejected
 ```
 
 ## Buffett's 10 Formulas
@@ -242,12 +272,14 @@ Combined score = (Technical Score × 0.3) + (Fundamental Score × 0.7)
 - Technical Score: (Williams %R + 100) / 100
 - Fundamental Score: (Buffett Score / 10) × 100
 
-## Bun Scripts
+## npm Scripts
 
 ```bash
-bun run dev          # Run screening (alias for bun run src/screening.ts)
-bun run screening    # Run combined screening
-bun run technical    # Run technical-only scan
-bun run analyze      # Analyze a stock (requires ticker argument)
-bun run compounder   # Run Compounding Machine screener
+npm run dev          # Run screening (alias for npm run screening)
+npm run screening    # Run combined screening
+npm run technical    # Run technical-only scan
+npm run analyze      # Analyze a stock (requires ticker argument)
+npm run compounder   # Run Compounding Machine screener
 ```
+
+Pass CLI flags after `--`, for example: `npm run screening -- --market us --min-score 7`
