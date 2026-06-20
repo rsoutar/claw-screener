@@ -1,10 +1,12 @@
-export type Market = "us" | "th";
+import type { Market } from "./types.js";
+export type { Market } from "./types.js";
 
 export interface WatchedStock {
   ticker: string;
   market: Market;
   addedAt: string;
   notes?: string;
+  group?: string;
   alertThreshold?: number;
   minBuffettScore?: number;
   lastPrice?: number;
@@ -64,6 +66,7 @@ export interface CheckAlertsResult {
 
 export interface CheckAlertsOptions {
   market?: Market;
+  group?: string;
   minBuffettScore?: number;
   dedupe?: boolean;
 }

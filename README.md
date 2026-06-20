@@ -280,6 +280,70 @@ npm run screening    # Run combined screening
 npm run technical    # Run technical-only scan
 npm run analyze      # Analyze a stock (requires ticker argument)
 npm run compounder   # Run Compounding Machine screener
+npm run typecheck    # Type-check without emitting
+npm run lint         # Run ESLint
+npm run format       # Format with Prettier
+npm test             # Run unit tests
+npm run build        # Compile to dist/
 ```
 
 Pass CLI flags after `--`, for example: `npm run screening -- --market us --min-score 7`
+
+## Configuration
+
+All entry points accept `--config <path>` to load a JSON config file. Configuration is resolved in priority order:
+
+1. CLI flags (e.g. `--config /path/to/config.json`)
+2. Environment variables
+3. `~/.claw-screener/config.json` (or path in `CLAW_SCREENER_CONFIG`)
+4. `.claw-screener.json` in the working directory
+5. Compiled defaults
+
+### Environment Variables
+
+| Variable                       | Description                                                          | Default                           |
+| ------------------------------ | -------------------------------------------------------------------- | --------------------------------- |
+| `SEC_USER_AGENT`               | User-Agent string for SEC EDGAR requests (should include your email) | Placeholder                       |
+| `CLAW_SCREENER_WATCHLIST_FILE` | Path to watchlist JSON file                                          | `~/.claw-screener-watchlist.json` |
+| `SEC_DB_PATH`                  | Path to SEC cache database                                           | `sec_cache.db`                    |
+| `PRICE_DB_PATH`                | Path to price cache database                                         | `price_cache.db`                  |
+| `LOG_LEVEL`                    | Log level (`info`, `debug`, `warn`, `error`)                         | `info`                            |
+| `YAHOO_RATE_LIMIT_MS`          | Delay between Yahoo requests (ms)                                    | `250`                             |
+| `YAHOO_MAX_RETRIES`            | Max retries for failed Yahoo requests                                | `4`                               |
+| `YAHOO_CONCURRENCY`            | Parallel fetch workers                                               | `4`                               |
+| `DCF_DISCOUNT_RATE`            | Override DCF discount rate (disables live Treasury fetch)            | `0.10`                            |
+| `DCF_TERMINAL_GROWTH`          | DCF terminal growth rate                                             | `0.025`                           |
+
+### Config File Example
+
+```json
+{
+  "secUserAgent": "MyApp/1.0 (myemail@example.com)",
+  "buffett": {
+    "roe": 20,
+    "debtToEquity": 0.3
+  },
+  "dcf": {
+    "discountRate": 0.08,
+    "useLiveRiskFreeRate": false
+  },
+  "screening": {
+    "tech": 0.4,
+    "fundamental": 0.6
+  }
+}
+```
+
+### SEC User-Agent
+
+SEC EDGAR requires a descriptive User-Agent with a contact email for fair access. Set it via:
+
+```bash
+export SEC_USER_AGENT="YourName/1.0 (youremail@example.com)"
+```
+
+If the placeholder is still in use, a warning is printed on each run.
+
+### DCF Discount Rate
+
+The Compounding Machine's DCF uses the US 10-Year Treasury yield as the risk-free rate by default (fetched daily from home.treasury.gov, no API key required). If the fetch fails, it falls back to the configured default (10%). Set `DCF_DISCOUNT_RATE` or `dcf.useLiveRiskFreeRate: false` in the config to override.

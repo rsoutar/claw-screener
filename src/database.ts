@@ -1,6 +1,5 @@
 import initSqlJs, { Database as SqlJsDatabase } from "sql.js";
 import { readFileSync, existsSync, writeFileSync } from "fs";
-import { join } from "path";
 
 export interface OHLC {
   Date: string;
@@ -30,39 +29,61 @@ async function getSql(): Promise<ReturnType<typeof initSqlJs>> {
   return sqlPromise;
 }
 
-export class PriceDataManager {
-  private db: SqlJsDatabase | null = null;
+const FLUSH_EVERY = 25;
+
+export class SqliteCache<K extends string, V> {
+  protected db: SqlJsDatabase | null = null;
   private dbPath: string;
-  private ttl: number;
+  private tableName: string;
+  private keyColumn: string;
+  private ttlMs: number;
   private initialized: boolean = false;
   private initPromise: Promise<void> | null = null;
+  private dirty: boolean = false;
+  private writesSinceFlush: number = 0;
 
-  constructor(dbPath: string = "price_cache.db", ttlDays: number = 1) {
+  constructor(dbPath: string, tableName: string, keyColumn: string, ttlDays: number) {
     this.dbPath = dbPath;
-    this.ttl = ttlDays * 24 * 60 * 60 * 1000;
+    this.tableName = tableName;
+    this.keyColumn = keyColumn;
+    this.ttlMs = ttlDays * 24 * 60 * 60 * 1000;
     this.initPromise = this.initDatabase();
   }
 
   private async initDatabase(): Promise<void> {
     if (this.initialized) return;
-    
+
     const SQL = await getSql();
-    
+
     if (existsSync(this.dbPath)) {
       const buffer = readFileSync(this.dbPath);
       this.db = new SQL.Database(buffer);
     } else {
       this.db = new SQL.Database();
     }
-    
+
     this.db.run(`
-      CREATE TABLE IF NOT EXISTS price_data (
-        ticker TEXT PRIMARY KEY,
+      CREATE TABLE IF NOT EXISTS ${this.tableName} (
+        ${this.keyColumn} TEXT PRIMARY KEY,
         data_json TEXT NOT NULL,
         fetched_at TEXT NOT NULL
       )
     `);
+
+    this.migrateLegacyColumns();
+
     this.initialized = true;
+  }
+
+  private migrateLegacyColumns(): void {
+    if (!this.db) return;
+    const rows = this.db.exec(`PRAGMA table_info(${this.tableName})`);
+    if (rows.length === 0) return;
+
+    const columns = rows[0].values.map((row) => row[1] as string);
+    if (columns.includes("payload_json") && !columns.includes("data_json")) {
+      this.db.run(`ALTER TABLE ${this.tableName} RENAME COLUMN payload_json TO data_json`);
+    }
   }
 
   private async ensureInitialized(): Promise<void> {
@@ -71,158 +92,91 @@ export class PriceDataManager {
     }
   }
 
-  private getCachedPrices(ticker: string): OHLC[] | null {
+  async get(key: K): Promise<V | null> {
+    await this.ensureInitialized();
     if (!this.db) return null;
 
     const stmt = this.db.prepare(
-      "SELECT data_json, fetched_at FROM price_data WHERE ticker = ?"
+      `SELECT data_json, fetched_at FROM ${this.tableName} WHERE ${this.keyColumn} = ?`
     );
-    stmt.bind([ticker]);
+    stmt.bind([key]);
 
-    if (stmt.step()) {
+    try {
+      if (!stmt.step()) return null;
       const row = stmt.getAsObject() as { data_json: string; fetched_at: string };
-      stmt.free();
 
       const fetchedAt = new Date(row.fetched_at).getTime();
-      if (Date.now() - fetchedAt > this.ttl) return null;
+      if (Date.now() - fetchedAt > this.ttlMs) return null;
 
-      return JSON.parse(row.data_json);
+      try {
+        return JSON.parse(row.data_json) as V;
+      } catch {
+        return null;
+      }
+    } finally {
+      stmt.free();
     }
-
-    stmt.free();
-    return null;
   }
 
-  private storePrices(ticker: string, data: OHLC[]): void {
+  async set(key: K, value: V): Promise<void> {
+    await this.ensureInitialized();
     if (!this.db) return;
 
     this.db.run(
-      `INSERT OR REPLACE INTO price_data (ticker, data_json, fetched_at) VALUES (?, ?, ?)`,
-      [ticker, JSON.stringify(data), new Date().toISOString()]
+      `INSERT OR REPLACE INTO ${this.tableName} (${this.keyColumn}, data_json, fetched_at) VALUES (?, ?, ?)`,
+      [key, JSON.stringify(value), new Date().toISOString()]
     );
-    this.saveToFile();
+
+    this.dirty = true;
+    this.writesSinceFlush++;
+    if (this.writesSinceFlush >= FLUSH_EVERY) {
+      this.flush();
+    }
   }
 
-  private saveToFile(): void {
-    if (!this.db) return;
+  flush(): void {
+    if (!this.db || !this.dirty) return;
     const data = this.db.export();
     const buffer = Buffer.from(data);
     writeFileSync(this.dbPath, buffer);
-  }
-
-  async getPrices(ticker: string): Promise<OHLC[] | null> {
-    await this.ensureInitialized();
-    return this.getCachedPrices(ticker);
-  }
-
-  async setPrices(ticker: string, data: OHLC[]): Promise<void> {
-    await this.ensureInitialized();
-    this.storePrices(ticker, data);
+    this.dirty = false;
+    this.writesSinceFlush = 0;
   }
 
   close(): void {
     if (this.db) {
-      this.saveToFile();
+      this.flush();
       this.db.close();
       this.db = null;
     }
   }
 }
 
-export class SECDataManager {
-  private db: SqlJsDatabase | null = null;
-  private dbPath: string;
-  private ttl: number;
-  private initialized: boolean = false;
-  private initPromise: Promise<void> | null = null;
+export class PriceDataManager extends SqliteCache<string, OHLC[]> {
+  constructor(dbPath: string = "price_cache.db", ttlDays: number = 1) {
+    super(dbPath, "price_data", "ticker", ttlDays);
+  }
 
+  async getPrices(ticker: string): Promise<OHLC[] | null> {
+    return this.get(ticker);
+  }
+
+  async setPrices(ticker: string, data: OHLC[]): Promise<void> {
+    return this.set(ticker, data);
+  }
+}
+
+export class SECDataManager extends SqliteCache<string, SECData> {
   constructor(dbPath: string = "sec_cache.db", ttlDays: number = 7) {
-    this.dbPath = dbPath;
-    this.ttl = ttlDays * 24 * 60 * 60 * 1000;
-    this.initPromise = this.initDatabase();
-  }
-
-  private async initDatabase(): Promise<void> {
-    if (this.initialized) return;
-    
-    const SQL = await getSql();
-    
-    if (existsSync(this.dbPath)) {
-      const buffer = readFileSync(this.dbPath);
-      this.db = new SQL.Database(buffer);
-    } else {
-      this.db = new SQL.Database();
-    }
-    
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS sec_data (
-        cik TEXT PRIMARY KEY,
-        data_json TEXT NOT NULL,
-        fetched_at TEXT NOT NULL
-      )
-    `);
-    this.initialized = true;
-  }
-
-  private async ensureInitialized(): Promise<void> {
-    if (!this.initialized && this.initPromise) {
-      await this.initPromise;
-    }
+    super(dbPath, "sec_data", "cik", ttlDays);
   }
 
   async getData(cik: string, forceRefresh: boolean = false): Promise<SECData | null> {
-    await this.ensureInitialized();
-    
-    if (!forceRefresh) {
-      return this.getCachedData(cik);
-    }
-    return null;
+    if (forceRefresh) return null;
+    return this.get(cik);
   }
 
-  private getCachedData(cik: string): SECData | null {
-    if (!this.db) return null;
-
-    const stmt = this.db.prepare(
-      "SELECT data_json, fetched_at FROM sec_data WHERE cik = ?"
-    );
-    stmt.bind([cik]);
-
-    if (stmt.step()) {
-      const row = stmt.getAsObject() as { data_json: string; fetched_at: string };
-      stmt.free();
-
-      const fetchedAt = new Date(row.fetched_at).getTime();
-      if (Date.now() - fetchedAt > this.ttl) return null;
-
-      return JSON.parse(row.data_json);
-    }
-
-    stmt.free();
-    return null;
-  }
-
-  storeData(cik: string, data: SECData): void {
-    if (!this.db) return;
-
-    this.db.run(
-      `INSERT OR REPLACE INTO sec_data (cik, data_json, fetched_at) VALUES (?, ?, ?)`,
-      [cik, JSON.stringify(data), new Date().toISOString()]
-    );
-    this.saveToFile();
-  }
-
-  private saveToFile(): void {
-    if (!this.db) return;
-    const data = this.db.export();
-    const buffer = Buffer.from(data);
-    writeFileSync(this.dbPath, buffer);
-  }
-
-  close(): void {
-    if (this.db) {
-      this.saveToFile();
-      this.db.close();
-      this.db = null;
-    }
+  async storeData(cik: string, data: SECData): Promise<void> {
+    return this.set(cik, data);
   }
 }

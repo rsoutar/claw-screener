@@ -1,4 +1,6 @@
 import { Financials } from "./secApi.js";
+import type { BuffettThresholds } from "./config.js";
+import { resolveConfig } from "./config.js";
 
 export type FormulaStatus = "PASS" | "FAIL" | "N/A";
 
@@ -10,11 +12,15 @@ export interface FormulaResult {
   message: string;
 }
 
+const DEFAULT_THRESHOLDS: BuffettThresholds = resolveConfig().buffett;
+
 export class FormulaEngine {
   private financials: Financials;
+  private thresholds: BuffettThresholds;
 
-  constructor(financials: Financials) {
+  constructor(financials: Financials, thresholds?: BuffettThresholds) {
     this.financials = financials;
+    this.thresholds = thresholds ?? DEFAULT_THRESHOLDS;
   }
 
   private getValue(key: string, defaultValue: number = 0): number {
@@ -55,25 +61,26 @@ export class FormulaEngine {
   debtToEquity(): FormulaResult {
     const liabilities = this.getValue("Liabilities");
     const equity = this.getValue("StockholdersEquity");
+    const target = this.thresholds.debtToEquity;
 
     if (equity === 0) {
       return {
         name: "Debt-to-Equity",
         status: "FAIL",
         value: 999,
-        target: "< 0.5",
+        target: `< ${target}`,
         message: "No equity data",
       };
     }
 
     const ratio = liabilities / equity;
-    const status: FormulaStatus = ratio < 0.5 ? "PASS" : "FAIL";
+    const status: FormulaStatus = ratio < target ? "PASS" : "FAIL";
 
     return {
       name: "Debt-to-Equity",
       status,
       value: ratio,
-      target: "< 0.5",
+      target: `< ${target}`,
       message: `Ratio: ${ratio.toFixed(2)}`,
     };
   }
@@ -81,25 +88,26 @@ export class FormulaEngine {
   returnOnEquity(): FormulaResult {
     const netIncome = this.getValue("NetIncomeLoss");
     const equity = this.getValue("StockholdersEquity");
+    const target = this.thresholds.roe;
 
     if (equity === 0 || netIncome === 0) {
       return {
         name: "ROE",
         status: "FAIL",
         value: 0,
-        target: "> 15%",
+        target: `> ${target}%`,
         message: "Insufficient data",
       };
     }
 
     const roe = (netIncome / equity) * 100;
-    const status: FormulaStatus = roe > 15 ? "PASS" : "FAIL";
+    const status: FormulaStatus = roe > target ? "PASS" : "FAIL";
 
     return {
       name: "ROE",
       status,
       value: roe,
-      target: "> 15%",
+      target: `> ${target}%`,
       message: `${roe.toFixed(1)}%`,
     };
   }
@@ -107,25 +115,26 @@ export class FormulaEngine {
   currentRatio(): FormulaResult {
     const currentAssets = this.getValue("CurrentAssets");
     const currentLiabilities = this.getValue("CurrentLiabilities");
+    const target = this.thresholds.currentRatio;
 
     if (currentLiabilities === 0) {
       return {
         name: "Current Ratio",
         status: "PASS",
         value: 999,
-        target: "> 1.5",
+        target: `> ${target}`,
         message: "No current liabilities (N/A - effectively PASS)",
       };
     }
 
     const ratio = currentAssets / currentLiabilities;
-    const status: FormulaStatus = ratio > 1.5 ? "PASS" : "FAIL";
+    const status: FormulaStatus = ratio > target ? "PASS" : "FAIL";
 
     return {
       name: "Current Ratio",
       status,
       value: ratio,
-      target: "> 1.5",
+      target: `> ${target}`,
       message: `Ratio: ${ratio.toFixed(2)}`,
     };
   }
@@ -133,25 +142,26 @@ export class FormulaEngine {
   operatingMargin(): FormulaResult {
     const operatingIncome = this.getValue("OperatingIncomeLoss");
     const revenue = this.getValue("Revenues");
+    const target = this.thresholds.operatingMargin;
 
     if (revenue === 0) {
       return {
         name: "Operating Margin",
         status: "FAIL",
         value: 0,
-        target: "> 12%",
+        target: `> ${target}%`,
         message: "No revenue data",
       };
     }
 
     const margin = (operatingIncome / revenue) * 100;
-    const status: FormulaStatus = margin > 12 ? "PASS" : "FAIL";
+    const status: FormulaStatus = margin > target ? "PASS" : "FAIL";
 
     return {
       name: "Operating Margin",
       status,
       value: margin,
-      target: "> 12%",
+      target: `> ${target}%`,
       message: `${margin.toFixed(1)}%`,
     };
   }
@@ -159,25 +169,26 @@ export class FormulaEngine {
   assetTurnover(): FormulaResult {
     const revenue = this.getValue("Revenues");
     const assets = this.getValue("Assets");
+    const target = this.thresholds.assetTurnover;
 
     if (assets === 0) {
       return {
         name: "Asset Turnover",
         status: "FAIL",
         value: 0,
-        target: "> 0.5",
+        target: `> ${target}`,
         message: "No asset data",
       };
     }
 
     const turnover = revenue / assets;
-    const status: FormulaStatus = turnover > 0.5 ? "PASS" : "FAIL";
+    const status: FormulaStatus = turnover > target ? "PASS" : "FAIL";
 
     return {
       name: "Asset Turnover",
       status,
       value: turnover,
-      target: "> 0.5",
+      target: `> ${target}`,
       message: turnover.toFixed(2),
     };
   }
@@ -185,25 +196,26 @@ export class FormulaEngine {
   interestCoverage(): FormulaResult {
     const operatingIncome = this.getValue("OperatingIncomeLoss");
     const interestExpense = this.getValue("InterestExpense");
+    const target = this.thresholds.interestCoverage;
 
     if (interestExpense === 0) {
       return {
         name: "Interest Coverage",
         status: "PASS",
         value: 999,
-        target: "> 3x",
+        target: `> ${target}x`,
         message: "No interest expense (N/A - effectively PASS)",
       };
     }
 
     const coverage = operatingIncome / Math.abs(interestExpense);
-    const status: FormulaStatus = coverage > 3 ? "PASS" : "FAIL";
+    const status: FormulaStatus = coverage > target ? "PASS" : "FAIL";
 
     return {
       name: "Interest Coverage",
       status,
       value: coverage,
-      target: "> 3x",
+      target: `> ${target}x`,
       message: `${coverage.toFixed(1)}x`,
     };
   }
@@ -222,12 +234,7 @@ export class FormulaEngine {
   }
 
   freeCashFlow(): FormulaResult {
-    let fcf = this.getValue("FreeCashFlow");
-
-    if (fcf === 0) {
-      fcf = this.getValue("CashFlowFromContinuingOperatingActivities");
-    }
-
+    const fcf = this.getValue("FreeCashFlow");
     const status: FormulaStatus = fcf > 0 ? "PASS" : "FAIL";
 
     return {
@@ -241,13 +248,16 @@ export class FormulaEngine {
 
   capitalAllocation(): FormulaResult {
     const roeResult = this.returnOnEquity();
+    const fcf = this.getValue("FreeCashFlow");
+    const hasPositiveFcf = fcf > 0;
+    const status: FormulaStatus = roeResult.status === "PASS" && hasPositiveFcf ? "PASS" : "FAIL";
 
     return {
       name: "Capital Allocation",
-      status: roeResult.status,
+      status,
       value: roeResult.value,
-      target: "> 15%",
-      message: `ROE: ${roeResult.message}`,
+      target: "> 15% ROE & FCF > 0",
+      message: `ROE: ${roeResult.message}, FCF: ${hasPositiveFcf ? "positive" : "negative/zero"}`,
     };
   }
 
@@ -266,9 +276,9 @@ export class FormulaEngine {
     ];
   }
 
-  getScore(): number {
-    const results = this.evaluateAll();
-    return results.filter((r) => r.status === "PASS").length;
+  getScore(results?: FormulaResult[]): number {
+    const evald = results ?? this.evaluateAll();
+    return evald.filter((r) => r.status === "PASS").length;
   }
 }
 
@@ -312,12 +322,10 @@ if (import.meta.main) {
   const results = engine.evaluateAll();
 
   console.log("Buffett Formula Results:");
-  console.log(`Score: ${engine.getScore()}/10\n`);
+  console.log(`Score: ${engine.getScore(results)}/10\n`);
 
   for (const result of results) {
     const symbol = result.status === "PASS" ? "✅" : "❌";
-    console.log(
-      `${symbol} ${result.name}: ${result.message} (Target: ${result.target})`
-    );
+    console.log(`${symbol} ${result.name}: ${result.message} (Target: ${result.target})`);
   }
 }

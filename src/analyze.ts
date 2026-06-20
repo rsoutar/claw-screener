@@ -1,14 +1,11 @@
 import YahooFinance from "yahoo-finance2";
-import { SECClient, extractFinancialFacts, Financials } from "./secApi.js";
-import { FormulaEngine, FormulaResult } from "./formulas.js";
+import { SECClient, extractFinancialFacts } from "./secApi.js";
+import { FormulaEngine } from "./formulas.js";
+import { isThaiTicker } from "./thaiTickers.js";
+import type { OutputFormat } from "./types.js";
+export type { OutputFormat } from "./types.js";
 
 const yahooFinance = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
-
-export type OutputFormat = "text" | "json" | "telegram";
-
-function isThaiTicker(ticker: string): boolean {
-  return ticker.toUpperCase().endsWith(".BK");
-}
 
 interface YahooFinanceData {
   price?: {
@@ -76,36 +73,32 @@ async function getYahooFinanceFcf(ticker: string): Promise<number | null> {
       modules: ["financialData"],
     });
     return result.financialData?.freeCashflow ?? null;
-  } catch (e) {
+  } catch {
     return null;
   }
 }
 
-function analyzeThaiStock(data: YahooFinanceData, format: OutputFormat): string {
+function analyzeThaiStock(data: YahooFinanceData, ticker: string, format: OutputFormat): string {
   const sd = data.summaryDetail || {};
   const dks = data.defaultKeyStatistics || {};
   const fd = data.financialData || {};
 
-  const isBank = sd.marketCap && sd.marketCap > 1e12 && 
-    (sd.marketCap / (fd.totalDebt || 1) > 2);
-
-  const cashDebtRatio = (fd.totalCash && fd.totalDebt && fd.totalDebt > 0)
-    ? (fd.totalCash / fd.totalDebt)
-    : null;
+  const cashDebtRatio =
+    fd.totalCash && fd.totalDebt && fd.totalDebt > 0 ? fd.totalCash / fd.totalDebt : null;
 
   const metrics: Record<string, string> = {
     "Market Cap": sd.marketCap ? formatMarketCap(sd.marketCap) : "N/A",
     "P/E (Trailing)": sd.trailingPE ? sd.trailingPE.toFixed(2) : "N/A",
     "P/E (Forward)": sd.forwardPE ? sd.forwardPE.toFixed(2) : "N/A",
     "Dividend Yield": sd.dividendYield ? (sd.dividendYield * 100).toFixed(2) + "%" : "N/A",
-    "Beta": dks.beta ? dks.beta.toFixed(2) : "N/A",
+    Beta: dks.beta ? dks.beta.toFixed(2) : "N/A",
     "Book Value": dks.bookValue ? dks.bookValue.toFixed(2) : "N/A",
     "P/B": dks.priceToBook ? dks.priceToBook.toFixed(2) : "N/A",
     "Total Cash": fd.totalCash ? formatMarketCap(fd.totalCash) : "N/A",
     "Total Debt": fd.totalDebt ? formatMarketCap(fd.totalDebt) : "N/A",
     "Cash/Debt": cashDebtRatio ? cashDebtRatio.toFixed(2) + "x" : "N/A",
-    "ROE": fd.returnOnEquity ? (fd.returnOnEquity * 100).toFixed(1) + "%" : "N/A",
-    "ROA": fd.returnOnAssets ? (fd.returnOnAssets * 100).toFixed(1) + "%" : "N/A",
+    ROE: fd.returnOnEquity ? (fd.returnOnEquity * 100).toFixed(1) + "%" : "N/A",
+    ROA: fd.returnOnAssets ? (fd.returnOnAssets * 100).toFixed(1) + "%" : "N/A",
     "Operating Margin": fd.operatingMargins ? (fd.operatingMargins * 100).toFixed(1) + "%" : "N/A",
     "Profit Margin": fd.profitMargins ? (fd.profitMargins * 100).toFixed(1) + "%" : "N/A",
     "Analyst Rating": fd.recommendationKey ? fd.recommendationKey.toUpperCase() : "N/A",
@@ -115,15 +108,31 @@ function analyzeThaiStock(data: YahooFinanceData, format: OutputFormat): string 
   };
 
   if (format === "json") {
-    return JSON.stringify({ ticker: data.price?.regularMarketPrice, metrics }, null, 2);
+    return JSON.stringify({ ticker, price: data.price?.regularMarketPrice, metrics }, null, 2);
   }
 
   const lines = [
     `📊 ${data.price?.regularMarketPrice ? `${data.price.regularMarketPrice.toFixed(2)} ` : ""}— Yahoo Finance Analysis\n`,
   ];
 
-  const col1 = ["Market Cap", "P/E (Trailing)", "P/E (Forward)", "Dividend Yield", "Beta", "Book Value", "P/B"];
-  const col2 = ["Total Cash", "Total Debt", "Cash/Debt", "ROE", "ROA", "Operating Margin", "Profit Margin"];
+  const col1 = [
+    "Market Cap",
+    "P/E (Trailing)",
+    "P/E (Forward)",
+    "Dividend Yield",
+    "Beta",
+    "Book Value",
+    "P/B",
+  ];
+  const col2 = [
+    "Total Cash",
+    "Total Debt",
+    "Cash/Debt",
+    "ROE",
+    "ROA",
+    "Operating Margin",
+    "Profit Margin",
+  ];
   const col3 = ["Analyst Rating", "Target Price", "52W Low", "52W High"];
 
   lines.push("Key Metrics:\n");
@@ -136,14 +145,25 @@ function analyzeThaiStock(data: YahooFinanceData, format: OutputFormat): string 
   }
 
   if (fd.recommendationKey) {
-    let rating = "";
+    let rating: string;
     switch (fd.recommendationKey) {
-      case "strongBuy": rating = "💚 Strong Buy"; break;
-      case "buy": rating = "🟢 Buy"; break;
-      case "hold": rating = "🟡 Hold"; break;
-      case "sell": rating = "🔴 Sell"; break;
-      case "strongSell": rating = "💔 Strong Sell"; break;
-      default: rating = fd.recommendationKey;
+      case "strongBuy":
+        rating = "💚 Strong Buy";
+        break;
+      case "buy":
+        rating = "🟢 Buy";
+        break;
+      case "hold":
+        rating = "🟡 Hold";
+        break;
+      case "sell":
+        rating = "🔴 Sell";
+        break;
+      case "strongSell":
+        rating = "💔 Strong Sell";
+        break;
+      default:
+        rating = fd.recommendationKey;
     }
     lines.push(`\nAnalyst Consensus: ${rating}`);
   }
@@ -158,10 +178,7 @@ function formatMarketCap(value: number): string {
   return value.toString();
 }
 
-export async function analyzeStock(
-  ticker: string,
-  format: OutputFormat = "text"
-): Promise<string> {
+export async function analyzeStock(ticker: string, format: OutputFormat = "text"): Promise<string> {
   console.log(`📊 Analyzing ${ticker}...`);
 
   if (isThaiTicker(ticker)) {
@@ -170,7 +187,7 @@ export async function analyzeStock(
     if (!yfData) {
       return `❌ Could not fetch data for ${ticker}`;
     }
-    return analyzeThaiStock(yfData, format);
+    return analyzeThaiStock(yfData, ticker, format);
   }
 
   const secClient = new SECClient();
@@ -203,7 +220,7 @@ export async function analyzeStock(
 
   const engine = new FormulaEngine(financials);
   const results = engine.evaluateAll();
-  const score = engine.getScore();
+  const score = engine.getScore(results);
 
   secClient.close();
 
@@ -275,9 +292,7 @@ export async function analyzeStock(
 
   for (const r of results) {
     const symbol = r.status === "PASS" ? "✅" : "❌";
-    lines.push(
-      `  ${symbol} ${r.name}: ${r.message} (Target: ${r.target})`
-    );
+    lines.push(`  ${symbol} ${r.name}: ${r.message} (Target: ${r.target})`);
   }
 
   return lines.join("\n");
@@ -291,6 +306,9 @@ async function main() {
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--format" && i + 1 < args.length) {
       format = args[i + 1] as OutputFormat;
+      i++;
+    } else if (args[i] === "--config" && i + 1 < args.length) {
+      process.env.CLAW_SCREENER_CONFIG = args[i + 1];
       i++;
     } else if (!ticker) {
       ticker = args[i];

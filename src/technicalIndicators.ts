@@ -67,9 +67,7 @@ export function interpretWilliamsR(value: number): WilliamsRInterpretation {
 
 if (import.meta.main) {
   const data: OHLC[] = Array.from({ length: 50 }, (_, i) => ({
-    Date: new Date(Date.now() - (50 - i) * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .split("T")[0],
+    Date: new Date(Date.now() - (50 - i) * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
     Open: 145 + Math.random() * 10,
     High: 150 + Math.random() * 10,
     Low: 140 + Math.random() * 10,
@@ -78,8 +76,6 @@ if (import.meta.main) {
   }));
 
   const wr = calculateWilliamsR(data);
-  const closes = data.map((d) => d.Close);
-  const ema = calculateEMA(closes);
 
   console.log(`Latest Williams %R: ${wr[wr.length - 1]?.toFixed(2)}`);
   console.log(`Interpretation: ${interpretWilliamsR(wr[wr.length - 1] ?? 0)}`);

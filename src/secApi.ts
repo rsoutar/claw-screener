@@ -1,13 +1,20 @@
 import { SECDataManager, SECData } from "./database.js";
+import { resolveConfig, isPlaceholderUserAgent } from "./config.js";
 
 const BASE_URL = "https://data.sec.gov/api/xbrl";
 const RATE_LIMIT_DELAY = 100;
+const PLACEHOLDER_USER_AGENT = "OpenClawStockScreener/1.0 (stock-screener@example.com)";
 
 const DEFAULT_HEADERS = {
-  "User-Agent": "OpenClawStockScreener/1.0 (stock-screener@example.com)",
+  "User-Agent": PLACEHOLDER_USER_AGENT,
   Accept: "application/json",
   From: "stock-screener@example.com",
 };
+
+function extractEmailFromUserAgent(userAgent: string): string {
+  const match = userAgent.match(/\(([^)]+@[^)]+)\)/);
+  return match?.[1] ?? "stock-screener@example.com";
+}
 
 interface CompanyFactsResponse {
   facts?: {
@@ -40,12 +47,16 @@ export class SECClient {
   private tickerCikCache: Map<string, string>;
   private lastRequestTime: number = 0;
 
-  constructor(
-    userAgent: string = "OpenClawStockScreener/1.0 (stock-screener@example.com)",
-    cacheDb: string = "sec_cache.db"
-  ) {
-    this.headers = { ...DEFAULT_HEADERS, "User-Agent": userAgent };
-    this.cache = new SECDataManager(cacheDb);
+  constructor(userAgent?: string, cacheDb?: string) {
+    const config = resolveConfig();
+    const ua = userAgent ?? config.secUserAgent;
+    if (isPlaceholderUserAgent(ua)) {
+      console.warn(
+        "⚠️  SEC User-Agent is still the placeholder. Set SEC_USER_AGENT env var or configure it in ~/.claw-screener/config.json to comply with SEC fair access policy."
+      );
+    }
+    this.headers = { ...DEFAULT_HEADERS, "User-Agent": ua, From: extractEmailFromUserAgent(ua) };
+    this.cache = new SECDataManager(cacheDb ?? config.dbPath.sec);
     this.tickerCikCache = new Map();
   }
 
@@ -53,9 +64,7 @@ export class SECClient {
     const now = Date.now();
     const timeSinceLastRequest = now - this.lastRequestTime;
     if (timeSinceLastRequest < RATE_LIMIT_DELAY) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, RATE_LIMIT_DELAY - timeSinceLastRequest)
-      );
+      await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_DELAY - timeSinceLastRequest));
     }
 
     this.lastRequestTime = Date.now();
@@ -87,7 +96,7 @@ export class SECClient {
     const data = (await this.makeRequest(url)) as CompanyFactsResponse | null;
 
     if (data) {
-      this.cache.storeData(cik, data as unknown as SECData);
+      await this.cache.storeData(cik, data as unknown as SECData);
     }
 
     return data;
@@ -128,13 +137,11 @@ export function extractFinancialFacts(companyFacts: CompanyFactsResponse): Finan
     Assets: "Assets",
     Liabilities: "Liabilities",
     StockholdersEquity: "StockholdersEquity",
-    CashAndCashEquivalentsAtCarryingValue:
-      "CashAndCashEquivalentsAtCarryingValue",
+    CashAndCashEquivalentsAtCarryingValue: "CashAndCashEquivalentsAtCarryingValue",
     NetIncomeLoss: "NetIncomeLoss",
     Revenues: "Revenues",
     OperatingIncomeLoss: "OperatingIncomeLoss",
-    CashFlowFromContinuingOperatingActivities:
-      "CashFlowFromContinuingOperatingActivities",
+    CashFlowFromContinuingOperatingActivities: "CashFlowFromContinuingOperatingActivities",
     InterestExpense: "InterestExpense",
     CurrentAssets: "AssetsCurrent",
     CurrentLiabilities: "LiabilitiesCurrent",
@@ -147,12 +154,22 @@ export function extractFinancialFacts(companyFacts: CompanyFactsResponse): Finan
       const tagData = facts[tag];
       const units = tagData.units;
       if (units && "USD" in units) {
-        const recentValue = (units["USD"] as Record<string, unknown>[])[0];
-        result[label] = {
-          value: recentValue["val"] as number,
-          end_date: recentValue["end"] as string,
-          form: (recentValue["form"] as string) ?? "10-K",
-        };
+        const entries = units["USD"] as Record<string, unknown>[];
+        const annual = entries.filter((e) => e["form"] === "10-K");
+        const pool = annual.length > 0 ? annual : entries;
+        const sorted = [...pool].sort((a, b) => {
+          const aEnd = (a["end"] as string) ?? "";
+          const bEnd = (b["end"] as string) ?? "";
+          return bEnd.localeCompare(aEnd);
+        });
+        const recentValue = sorted[0];
+        if (recentValue && typeof recentValue["val"] === "number") {
+          result[label] = {
+            value: recentValue["val"] as number,
+            end_date: (recentValue["end"] as string) ?? "",
+            form: (recentValue["form"] as string) ?? "10-K",
+          };
+        }
       }
     }
   }

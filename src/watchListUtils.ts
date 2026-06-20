@@ -1,19 +1,34 @@
-import type { AlertResult, Market, StockFailure, StockStatus } from "./watchListTypes.js";
-
-export type OutputFormat = "text" | "json" | "telegram";
+import type {
+  AlertResult,
+  Market,
+  StockFailure,
+  StockStatus,
+  WatchedStock,
+} from "./watchListTypes.js";
+import { isThaiTicker } from "./thaiTickers.js";
+import { resolveConfig } from "./config.js";
+export type { OutputFormat } from "./types.js";
 
 export function parseTickerList(input: string): string[] {
-  return [...new Set(input.split(",").map((t) => t.trim().toUpperCase()).filter(Boolean))];
+  return [
+    ...new Set(
+      input
+        .split(",")
+        .map((t) => t.trim().toUpperCase())
+        .filter(Boolean)
+    ),
+  ];
 }
 
 export function calculateCombinedScore(williamsR: number, buffettScore: number): number {
+  const { tech, fundamental } = resolveConfig().screening;
   const techScore = (williamsR + 100) / 100;
   const fundamentalScore = (buffettScore / 10) * 100;
-  return techScore * 0.3 + fundamentalScore * 0.7;
+  return techScore * tech + fundamentalScore * fundamental;
 }
 
 export function inferMarketFromTicker(ticker: string): Market {
-  return ticker.toUpperCase().endsWith(".BK") ? "th" : "us";
+  return isThaiTicker(ticker) ? "th" : "us";
 }
 
 export function shouldEmitAlert(
@@ -25,6 +40,69 @@ export function shouldEmitAlert(
     return true;
   }
   return !lastAlertTypes?.includes(alertType);
+}
+
+export function buildAlertsForStock(
+  stock: Pick<WatchedStock, "ticker" | "market" | "alertThreshold" | "minBuffettScore">,
+  currentWR: number,
+  currentPrice: number,
+  buffettScore?: number,
+  minBuffettScore?: number
+): AlertResult[] {
+  const alerts: AlertResult[] = [];
+
+  if (currentWR < -80) {
+    alerts.push({
+      ticker: stock.ticker,
+      market: stock.market,
+      alertType: "oversold",
+      message: `${stock.ticker} is oversold (Williams %R: ${currentWR.toFixed(1)}) - potential buying opportunity`,
+      currentPrice,
+      currentWilliamsR: currentWR,
+    });
+  } else if (currentWR > -20) {
+    alerts.push({
+      ticker: stock.ticker,
+      market: stock.market,
+      alertType: "overbought",
+      message: `${stock.ticker} is overbought (Williams %R: ${currentWR.toFixed(1)})`,
+      currentPrice,
+      currentWilliamsR: currentWR,
+    });
+  }
+
+  if (stock.alertThreshold !== undefined && currentWR < stock.alertThreshold) {
+    alerts.push({
+      ticker: stock.ticker,
+      market: stock.market,
+      alertType: "threshold",
+      message: `${stock.ticker} hit custom threshold (Williams %R: ${currentWR.toFixed(1)}, threshold: ${stock.alertThreshold})`,
+      currentPrice,
+      currentWilliamsR: currentWR,
+    });
+  }
+
+  const qualityThreshold = stock.minBuffettScore ?? minBuffettScore;
+  if (
+    qualityThreshold !== undefined &&
+    currentWR < -80 &&
+    buffettScore !== undefined &&
+    buffettScore >= qualityThreshold
+  ) {
+    const combinedScore = calculateCombinedScore(currentWR, buffettScore);
+    alerts.push({
+      ticker: stock.ticker,
+      market: stock.market,
+      alertType: "quality",
+      message: `${stock.ticker} is oversold with strong fundamentals (Buffett: ${buffettScore}/10, combined: ${combinedScore.toFixed(0)}%)`,
+      currentPrice,
+      currentWilliamsR: currentWR,
+      buffettScore,
+      combinedScore,
+    });
+  }
+
+  return alerts;
 }
 
 export function formatChangePercent(changePercent: number): string {
@@ -48,13 +126,16 @@ export function formatStatusLabel(status: StockStatus["status"]): string {
 }
 
 export function formatStatusTelegram(stocks: StockStatus[], checkedAt: string): string {
-  const lines = [`📊 Watchlist Status (${stocks.length} stocks)`, `Checked: ${new Date(checkedAt).toLocaleString()}`, ""];
+  const lines = [
+    `📊 Watchlist Status (${stocks.length} stocks)`,
+    `Checked: ${new Date(checkedAt).toLocaleString()}`,
+    "",
+  ];
 
   for (const stock of stocks) {
     const buffett = stock.buffettScore !== undefined ? ` | Buffett: ${stock.buffettScore}/10` : "";
-    const combined = stock.combinedScore !== undefined
-      ? ` | Combined: ${stock.combinedScore.toFixed(0)}%`
-      : "";
+    const combined =
+      stock.combinedScore !== undefined ? ` | Combined: ${stock.combinedScore.toFixed(0)}%` : "";
     lines.push(
       `**${stock.ticker}** (${stock.market.toUpperCase()}) — $${stock.price.toFixed(2)} ` +
         `(${formatChangePercent(stock.changePercent)}) | WR: ${stock.williamsR.toFixed(1)} ` +
@@ -75,9 +156,7 @@ export function formatAlertsTelegram(
   if (alerts.length > 0) {
     lines.push(`🔔 Watchlist Alerts (${alerts.length})`, "");
     for (const alert of alerts) {
-      const extra = alert.buffettScore !== undefined
-        ? ` | Buffett: ${alert.buffettScore}/10`
-        : "";
+      const extra = alert.buffettScore !== undefined ? ` | Buffett: ${alert.buffettScore}/10` : "";
       lines.push(
         `**${alert.ticker}** — ${alert.alertType}`,
         alert.message,

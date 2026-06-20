@@ -1,11 +1,14 @@
 import { getTickers, getMarketName, Market } from "./tickers.js";
-import { PriceDataFetcherSimple } from "./priceDataSimple.js";
+import { PriceDataFetcher } from "./priceData.js";
 import {
   calculateWilliamsR,
   calculateEMA,
   interpretWilliamsR,
   WilliamsRInterpretation,
 } from "./technicalIndicators.js";
+import { normalizeMarket } from "./types.js";
+import type { OutputFormat } from "./types.js";
+export type { OutputFormat } from "./types.js";
 
 export interface OversoldStock {
   ticker: string;
@@ -13,8 +16,6 @@ export interface OversoldStock {
   williamsREMA: number;
   signal: WilliamsRInterpretation;
 }
-
-export type OutputFormat = "text" | "json" | "telegram";
 
 export async function runTechnicalScreening(
   market: Market = "us",
@@ -24,16 +25,15 @@ export async function runTechnicalScreening(
 ): Promise<string> {
   const marketName = getMarketName(market);
 
-  console.log(
-    `📊 Scanning ${marketName} for oversold stocks (threshold: ${threshold})...`
-  );
+  console.log(`📊 Scanning ${marketName} for oversold stocks (threshold: ${threshold})...`);
 
   const tickers = await getTickers(market);
   console.log(`  Found ${tickers.length} tickers`);
 
   console.log("  Fetching price data...");
-  const fetcher = new PriceDataFetcherSimple();
+  const fetcher = new PriceDataFetcher();
   const priceResults = await fetcher.batchFetchPrices(tickers, 90);
+  fetcher.close();
 
   console.log("  Calculating Williams %R...");
   const oversoldStocks: OversoldStock[] = [];
@@ -45,7 +45,10 @@ export async function runTechnicalScreening(
     const latestWr = williamsR[williamsR.length - 1];
 
     if (latestWr && latestWr < threshold) {
-      const wrEma = calculateEMA(williamsR.filter((v) => !isNaN(v)), 13);
+      const wrEma = calculateEMA(
+        williamsR.filter((v) => !isNaN(v)),
+        13
+      );
       const latestEma = wrEma[wrEma.length - 1];
 
       oversoldStocks.push({
@@ -81,17 +84,15 @@ export async function runTechnicalScreening(
     ];
 
     if (oversoldStocks.length > 0) {
-      lines.push("🔴 Most Oversold (Top 10):\n");
+      lines.push(`🔴 Most Oversold (Top ${Math.min(topN, oversoldStocks.length)}):\n`);
 
-      for (let i = 0; i < Math.min(10, oversoldStocks.length); i++) {
+      for (let i = 0; i < Math.min(topN, oversoldStocks.length); i++) {
         const stock = oversoldStocks[i];
-        lines.push(
-          `${i + 1}. **${stock.ticker}** — Williams %R: ${stock.williamsR.toFixed(1)} 🔴`
-        );
+        lines.push(`${i + 1}. **${stock.ticker}** — Williams %R: ${stock.williamsR.toFixed(1)} 🔴`);
       }
 
-      if (oversoldStocks.length > 10) {
-        lines.push(`\n+ ${oversoldStocks.length - 10} more`);
+      if (oversoldStocks.length > topN) {
+        lines.push(`\n+ ${oversoldStocks.length - topN} more`);
       }
     } else {
       lines.push("✅ No oversold stocks found");
@@ -107,13 +108,11 @@ export async function runTechnicalScreening(
   ];
 
   if (oversoldStocks.length > 0) {
-    lines.push(
-      `Top ${Math.min(topN, oversoldStocks.length)} Most Oversold:\n`
-    );
+    lines.push(`Top ${Math.min(topN, oversoldStocks.length)} Most Oversold:\n`);
 
     for (let i = 0; i < Math.min(topN, oversoldStocks.length); i++) {
       const stock = oversoldStocks[i];
-      const tickerPad = market === "bk" ? 10 : 6;
+      const tickerPad = market === "th" ? 10 : 6;
       lines.push(
         `${i + 1}. ${stock.ticker.padEnd(tickerPad)} — Williams %R: ${stock.williamsR.toFixed(1).padStart(6)} ` +
           `(EMA: ${stock.williamsREMA.toFixed(1).padStart(6)})`
@@ -139,11 +138,10 @@ async function main() {
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--market" && i + 1 < args.length) {
-      const marketArg = args[i + 1].toLowerCase();
-      if (marketArg === "us" || marketArg === "bk") {
-        market = marketArg;
-      } else {
-        console.error("Invalid market. Use 'us' or 'bk'");
+      try {
+        market = normalizeMarket(args[i + 1]);
+      } catch (e) {
+        console.error((e as Error).message);
         process.exit(1);
       }
       i++;
@@ -155,6 +153,9 @@ async function main() {
       i++;
     } else if (args[i] === "--format" && i + 1 < args.length) {
       format = args[i + 1] as OutputFormat;
+      i++;
+    } else if (args[i] === "--config" && i + 1 < args.length) {
+      process.env.CLAW_SCREENER_CONFIG = args[i + 1];
       i++;
     }
   }

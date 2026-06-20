@@ -1,4 +1,5 @@
-export type Market = "us" | "bk";
+import type { Market } from "./types.js";
+export type { Market } from "./types.js";
 
 export async function getTickers(market: Market): Promise<string[]> {
   if (market === "us") {
