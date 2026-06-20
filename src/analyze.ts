@@ -298,7 +298,7 @@ async function main() {
   }
 
   if (!ticker) {
-    console.error("Usage: bun run src/analyze.ts <ticker> [--format text|json|telegram]");
+    console.error("Usage: npm run analyze -- <ticker> [--format text|json|telegram]");
     process.exit(1);
   }
 
