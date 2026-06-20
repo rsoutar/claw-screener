@@ -2,64 +2,56 @@ import { PriceDataFetcher } from "./priceData.js";
 import { SECClient, extractFinancialFacts } from "./secApi.js";
 import { FormulaEngine } from "./formulas.js";
 import { calculateWilliamsR } from "./technicalIndicators.js";
+import { fetchPricesForWilliamsR } from "./watchListPrices.js";
+import {
+  calculateCombinedScore,
+  formatAlertsTelegram,
+  formatChangePercent,
+  formatStatusLabel,
+  formatStatusTelegram,
+  inferMarketFromTicker,
+  OutputFormat,
+  parseTickerList,
+  shouldEmitAlert,
+} from "./watchListUtils.js";
+import type {
+  AlertResult,
+  CheckAlertsOptions,
+  CheckAlertsResult,
+  Market,
+  StockFailure,
+  StockStatus,
+  WatchedStock,
+  WatchListData,
+  WatchListStatus,
+} from "./watchListTypes.js";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import os from "os";
 
-export type Market = "us" | "th";
+export type {
+  AlertResult,
+  CheckAlertsResult,
+  Market,
+  StockFailure,
+  StockStatus,
+  WatchedStock,
+  WatchListData,
+  WatchListStatus,
+} from "./watchListTypes.js";
+export { calculateCombinedScore, parseTickerList } from "./watchListUtils.js";
+export { fetchPricesForWilliamsR, PRICE_HISTORY_DAYS, WILLIAMS_R_PERIOD } from "./watchListPrices.js";
 
-export interface WatchedStock {
-  ticker: string;
-  market: Market;
-  addedAt: string;
-  notes?: string;
-  alertThreshold?: number; // Williams %R threshold for alerts
-  lastPrice?: number;
-  lastWilliamsR?: number;
-  lastBuffettScore?: number;
-  lastCheckedAt?: string;
+const DEFAULT_WATCHLIST_FILE = join(os.homedir(), ".claw-screener-watchlist.json");
+
+function resolveWatchlistFile(path?: string): string {
+  return path ?? process.env.CLAW_SCREENER_WATCHLIST_FILE ?? DEFAULT_WATCHLIST_FILE;
 }
 
-export interface WatchListData {
-  stocks: WatchedStock[];
-  updatedAt: string;
-}
-
-export interface StockStatus {
-  ticker: string;
-  market: Market;
-  williamsR: number;
-  price: number;
-  changePercent: number;
-  status: "normal" | "oversold" | "overbought" | "alert";
-  buffettScore?: number;
-}
-
-export interface WatchListStatus {
-  total: number;
-  stocks: StockStatus[];
-  checkedAt: string;
-}
-
-export interface AlertResult {
-  ticker: string;
-  market: Market;
-  alertType: "oversold" | "overbought" | "threshold";
-  message: string;
-  currentPrice: number;
-  currentWilliamsR: number;
-}
-
-const WATCHLIST_FILE = join(os.homedir(), ".claw-screener-watchlist.json");
-
-function getMarketName(market: Market): string {
-  return market === "us" ? "US Market" : " Thai Market";
-}
-
-function loadWatchList(): WatchListData {
-  if (existsSync(WATCHLIST_FILE)) {
+function loadWatchList(filePath: string): WatchListData {
+  if (existsSync(filePath)) {
     try {
-      const data = JSON.parse(readFileSync(WATCHLIST_FILE, "utf-8"));
+      const data = JSON.parse(readFileSync(filePath, "utf-8"));
       return {
         stocks: data.stocks || [],
         updatedAt: data.updatedAt || new Date().toISOString(),
@@ -71,22 +63,25 @@ function loadWatchList(): WatchListData {
   return { stocks: [], updatedAt: new Date().toISOString() };
 }
 
-function saveWatchList(data: WatchListData): void {
-  writeFileSync(WATCHLIST_FILE, JSON.stringify(data, null, 2));
+function saveWatchList(filePath: string, data: WatchListData): void {
+  writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
 export class WatchListManager {
   private data: WatchListData;
+  private readonly filePath: string;
 
-  constructor() {
-    this.data = loadWatchList();
+  constructor(filePath?: string) {
+    this.filePath = resolveWatchlistFile(filePath);
+    this.data = loadWatchList(this.filePath);
   }
 
   add(
     ticker: string,
     market: Market = "us",
     notes?: string,
-    alertThreshold?: number
+    alertThreshold?: number,
+    minBuffettScore?: number
   ): boolean {
     const upperTicker = ticker.toUpperCase();
     const exists = this.data.stocks.some(
@@ -103,11 +98,34 @@ export class WatchListManager {
       addedAt: new Date().toISOString(),
       notes,
       alertThreshold,
+      minBuffettScore,
     });
 
-    this.data.updatedAt = new Date().toISOString();
-    saveWatchList(this.data);
+    this.persist();
     return true;
+  }
+
+  addMany(
+    tickers: string[],
+    market?: Market,
+    notes?: string,
+    alertThreshold?: number,
+    minBuffettScore?: number
+  ): { added: string[]; skipped: string[] } {
+    const added: string[] = [];
+    const skipped: string[] = [];
+
+    for (const ticker of tickers) {
+      const resolvedMarket = market ?? inferMarketFromTicker(ticker);
+      const success = this.add(ticker, resolvedMarket, notes, alertThreshold, minBuffettScore);
+      if (success) {
+        added.push(ticker);
+      } else {
+        skipped.push(ticker);
+      }
+    }
+
+    return { added, skipped };
   }
 
   remove(ticker: string, market?: Market): boolean {
@@ -123,8 +141,7 @@ export class WatchListManager {
     }
 
     if (this.data.stocks.length < initialLength) {
-      this.data.updatedAt = new Date().toISOString();
-      saveWatchList(this.data);
+      this.persist();
       return true;
     }
 
@@ -156,75 +173,209 @@ export class WatchListManager {
       return false;
     }
 
-    Object.assign(stock, updates);
-    this.data.updatedAt = new Date().toISOString();
-    saveWatchList(this.data);
+    const { ticker: _ticker, market: _market, addedAt: _addedAt, ...safeUpdates } = updates;
+    Object.assign(stock, safeUpdates);
+    this.persist();
     return true;
   }
 
-  async checkAlerts(): Promise<AlertResult[]> {
-    const alerts: AlertResult[] = [];
-    const priceFetcher = new PriceDataFetcher();
+  private persist(): void {
+    this.data.updatedAt = new Date().toISOString();
+    saveWatchList(this.filePath, this.data);
+  }
 
-    for (const stock of this.data.stocks) {
+  private async getBuffettScore(
+    secClient: SECClient | null,
+    ticker: string,
+    market: Market
+  ): Promise<number | undefined> {
+    if (!secClient || market !== "us") {
+      return undefined;
+    }
+
+    try {
+      const cik = await secClient.resolveTickerToCik(ticker);
+      if (!cik) {
+        return undefined;
+      }
+
+      const companyFacts = await secClient.getCompanyFacts(cik);
+      if (!companyFacts) {
+        return undefined;
+      }
+
+      const engine = new FormulaEngine(extractFinancialFacts(companyFacts));
+      return engine.getScore();
+    } catch {
+      return undefined;
+    }
+  }
+
+  private buildAlertsForStock(
+    stock: WatchedStock,
+    currentWR: number,
+    currentPrice: number,
+    buffettScore?: number,
+    minBuffettScore?: number
+  ): AlertResult[] {
+    const alerts: AlertResult[] = [];
+
+    if (currentWR < -80) {
+      alerts.push({
+        ticker: stock.ticker,
+        market: stock.market,
+        alertType: "oversold",
+        message: `${stock.ticker} is oversold (Williams %R: ${currentWR.toFixed(1)}) - potential buying opportunity`,
+        currentPrice,
+        currentWilliamsR: currentWR,
+      });
+    } else if (currentWR > -20) {
+      alerts.push({
+        ticker: stock.ticker,
+        market: stock.market,
+        alertType: "overbought",
+        message: `${stock.ticker} is overbought (Williams %R: ${currentWR.toFixed(1)})`,
+        currentPrice,
+        currentWilliamsR: currentWR,
+      });
+    }
+
+    if (stock.alertThreshold !== undefined) {
+      const isBelow = currentWR < stock.alertThreshold;
+      const isAbove = currentWR > -stock.alertThreshold;
+
+      if (isBelow || (stock.alertThreshold > 0 && isAbove)) {
+        alerts.push({
+          ticker: stock.ticker,
+          market: stock.market,
+          alertType: "threshold",
+          message: `${stock.ticker} hit custom threshold (Williams %R: ${currentWR.toFixed(1)}, threshold: ${stock.alertThreshold})`,
+          currentPrice,
+          currentWilliamsR: currentWR,
+        });
+      }
+    }
+
+    const qualityThreshold = stock.minBuffettScore ?? minBuffettScore;
+    if (
+      qualityThreshold !== undefined &&
+      currentWR < -80 &&
+      buffettScore !== undefined &&
+      buffettScore >= qualityThreshold
+    ) {
+      const combinedScore = calculateCombinedScore(currentWR, buffettScore);
+      alerts.push({
+        ticker: stock.ticker,
+        market: stock.market,
+        alertType: "quality",
+        message: `${stock.ticker} is oversold with strong fundamentals (Buffett: ${buffettScore}/10, combined: ${combinedScore.toFixed(0)}%)`,
+        currentPrice,
+        currentWilliamsR: currentWR,
+        buffettScore,
+        combinedScore,
+      });
+    }
+
+    return alerts;
+  }
+
+  async checkAlerts(options: CheckAlertsOptions = {}): Promise<CheckAlertsResult> {
+    const { market, minBuffettScore, dedupe = true } = options;
+    const stocks = market ? this.getByMarket(market) : this.getAll();
+    const alerts: AlertResult[] = [];
+    const failures: StockFailure[] = [];
+    let skipped = 0;
+
+    const priceFetcher = new PriceDataFetcher();
+    const needsFundamentals = stocks.some(
+      (stock) => stock.minBuffettScore !== undefined || minBuffettScore !== undefined
+    );
+    const secClient = needsFundamentals ? new SECClient() : null;
+
+    for (const stock of stocks) {
       try {
-        const result = await priceFetcher.fetchStockPrices(stock.ticker, 30);
-        if (!result.success || !result.data) {
+        const prices = await fetchPricesForWilliamsR(priceFetcher, stock.ticker);
+        if (!prices) {
+          failures.push({
+            ticker: stock.ticker,
+            market: stock.market,
+            reason: "Insufficient price history for Williams %R",
+          });
           continue;
         }
 
-        const prices = result.data;
         const williamsR = calculateWilliamsR(prices);
         const currentWR = williamsR[williamsR.length - 1];
 
-        if (!isNaN(currentWR)) {
-          const currentPrice = prices[prices.length - 1].Close;
-
-          // Check for oversold/overbought
-          if (currentWR < -80) {
-            alerts.push({
-              ticker: stock.ticker,
-              market: stock.market,
-              alertType: "oversold",
-              message: `${stock.ticker} is oversold (Williams %R: ${currentWR.toFixed(1)}) - potential buying opportunity`,
-              currentPrice,
-              currentWilliamsR: currentWR,
-            });
-          } else if (currentWR > -20) {
-            alerts.push({
-              ticker: stock.ticker,
-              market: stock.market,
-              alertType: "overbought",
-              message: `${stock.ticker} is overbought (Williams %R: ${currentWR.toFixed(1)})`,
-              currentPrice,
-              currentWilliamsR: currentWR,
-            });
-          }
-
-          // Check custom threshold
-          if (stock.alertThreshold !== undefined) {
-            const isBelow = currentWR < stock.alertThreshold;
-            const isAbove = currentWR > -stock.alertThreshold; // For positive thresholds
-            
-            if (isBelow || (stock.alertThreshold > 0 && isAbove)) {
-              alerts.push({
-                ticker: stock.ticker,
-                market: stock.market,
-                alertType: "threshold",
-                message: `${stock.ticker} hit custom threshold (Williams %R: ${currentWR.toFixed(1)}, threshold: ${stock.alertThreshold})`,
-                currentPrice,
-                currentWilliamsR: currentWR,
-              });
-            }
-          }
+        if (isNaN(currentWR)) {
+          failures.push({
+            ticker: stock.ticker,
+            market: stock.market,
+            reason: "Could not calculate Williams %R",
+          });
+          continue;
         }
+
+        const currentPrice = prices[prices.length - 1].Close;
+        const buffettScore = await this.getBuffettScore(secClient, stock.ticker, stock.market);
+        const candidateAlerts = this.buildAlertsForStock(
+          stock,
+          currentWR,
+          currentPrice,
+          buffettScore,
+          minBuffettScore
+        );
+
+        const activeAlertTypes = candidateAlerts.map((alert) => alert.alertType);
+        const previousAlertTypes = stock.lastAlertTypes ?? [];
+
+        if (candidateAlerts.length === 0) {
+          if (previousAlertTypes.length > 0) {
+            this.update(stock.ticker, stock.market, {
+              lastAlertTypes: undefined,
+              lastAlertAt: undefined,
+            });
+          }
+          continue;
+        }
+
+        const emittedTypes: AlertResult["alertType"][] = [];
+        for (const alert of candidateAlerts) {
+          if (!shouldEmitAlert(previousAlertTypes, alert.alertType, dedupe)) {
+            skipped++;
+            continue;
+          }
+
+          alerts.push(alert);
+          emittedTypes.push(alert.alertType);
+        }
+
+        this.update(stock.ticker, stock.market, {
+          lastAlertTypes: activeAlertTypes,
+          lastAlertAt: new Date().toISOString(),
+          lastPrice: currentPrice,
+          lastWilliamsR: currentWR,
+          lastBuffettScore: buffettScore,
+          lastCheckedAt: new Date().toISOString(),
+        });
       } catch (e) {
-        console.error(`Error checking alerts for ${stock.ticker}:`, e);
+        failures.push({
+          ticker: stock.ticker,
+          market: stock.market,
+          reason: e instanceof Error ? e.message : String(e),
+        });
       }
     }
 
     priceFetcher.close();
-    return alerts;
+    secClient?.close();
+
+    return {
+      alerts,
+      failures,
+      skipped,
+      checkedAt: new Date().toISOString(),
+    };
   }
 
   async getStatus(
@@ -235,28 +386,34 @@ export class WatchListManager {
     const status: WatchListStatus = {
       total: stocks.length,
       stocks: [],
+      failures: [],
       checkedAt: new Date().toISOString(),
     };
 
     const priceFetcher = new PriceDataFetcher();
-    let secClient: SECClient | null = null;
-
-    if (includeFundamentals) {
-      secClient = new SECClient();
-    }
+    const secClient = includeFundamentals ? new SECClient() : null;
 
     for (const stock of stocks) {
       try {
-        const result = await priceFetcher.fetchStockPrices(stock.ticker, 30);
-        if (!result.success || !result.data) {
+        const prices = await fetchPricesForWilliamsR(priceFetcher, stock.ticker);
+        if (!prices) {
+          status.failures.push({
+            ticker: stock.ticker,
+            market: stock.market,
+            reason: "Insufficient price history for Williams %R",
+          });
           continue;
         }
 
-        const prices = result.data;
         const williamsR = calculateWilliamsR(prices);
         const currentWR = williamsR[williamsR.length - 1];
 
         if (isNaN(currentWR)) {
+          status.failures.push({
+            ticker: stock.ticker,
+            market: stock.market,
+            reason: "Could not calculate Williams %R",
+          });
           continue;
         }
 
@@ -265,31 +422,29 @@ export class WatchListManager {
           ? ((currentPrice - prices[prices.length - 2].Close) / prices[prices.length - 2].Close) * 100
           : 0;
 
-        // Get Buffett score if requested
-        let buffettScore: number | undefined;
-        if (includeFundamentals && secClient && stock.market === "us") {
-          try {
-            const cik = await secClient.resolveTickerToCik(stock.ticker);
-            if (cik) {
-              const companyFacts = await secClient.getCompanyFacts(cik);
-              if (companyFacts) {
-                const engine = new FormulaEngine(extractFinancialFacts(companyFacts));
-                buffettScore = engine.getScore();
-              }
-            }
-          } catch (e) {
-            console.error(`Error getting Buffett score for ${stock.ticker}:`, e);
-          }
-        }
+        const buffettScore = includeFundamentals
+          ? await this.getBuffettScore(secClient, stock.ticker, stock.market)
+          : undefined;
 
         let stockStatus: StockStatus["status"] = "normal";
-        if (currentWR < -80) {
+        if (
+          stock.minBuffettScore !== undefined &&
+          currentWR < -80 &&
+          buffettScore !== undefined &&
+          buffettScore >= stock.minBuffettScore
+        ) {
+          stockStatus = "quality";
+        } else if (currentWR < -80) {
           stockStatus = "oversold";
         } else if (currentWR > -20) {
           stockStatus = "overbought";
         } else if (stock.alertThreshold !== undefined && currentWR < stock.alertThreshold) {
           stockStatus = "alert";
         }
+
+        const combinedScore = buffettScore !== undefined
+          ? calculateCombinedScore(currentWR, buffettScore)
+          : undefined;
 
         status.stocks.push({
           ticker: stock.ticker,
@@ -299,6 +454,7 @@ export class WatchListManager {
           changePercent: priceChange,
           status: stockStatus,
           buffettScore,
+          combinedScore,
         });
 
         stock.lastPrice = currentPrice;
@@ -306,137 +462,404 @@ export class WatchListManager {
         stock.lastBuffettScore = buffettScore;
         stock.lastCheckedAt = new Date().toISOString();
       } catch (e) {
-        console.error(`Error checking ${stock.ticker}:`, e);
+        status.failures.push({
+          ticker: stock.ticker,
+          market: stock.market,
+          reason: e instanceof Error ? e.message : String(e),
+        });
       }
     }
 
     priceFetcher.close();
-    if (secClient) {
-      secClient.close();
-    }
+    secClient?.close();
 
-    // Save updated stock data
     for (const s of stocks) {
-      this.update(s.ticker, s.market, {
-        lastPrice: s.lastPrice,
-        lastWilliamsR: s.lastWilliamsR,
-        lastBuffettScore: s.lastBuffettScore,
-        lastCheckedAt: s.lastCheckedAt,
-      });
+      if (s.lastCheckedAt) {
+        this.update(s.ticker, s.market, {
+          lastPrice: s.lastPrice,
+          lastWilliamsR: s.lastWilliamsR,
+          lastBuffettScore: s.lastBuffettScore,
+          lastCheckedAt: s.lastCheckedAt,
+        });
+      }
     }
 
     return status;
   }
 }
 
+interface CommonCliOptions {
+  market?: Market;
+  format: OutputFormat;
+  includeFundamentals: boolean;
+  minBuffettScore?: number;
+  dedupe: boolean;
+}
+
+function parseCommonArgs(args: string[]): CommonCliOptions {
+  let market: Market | undefined;
+  let format: OutputFormat = "text";
+  let includeFundamentals = false;
+  let minBuffettScore: number | undefined;
+  let dedupe = true;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--market" && i + 1 < args.length) {
+      market = args[i + 1] as Market;
+      i++;
+    } else if (args[i] === "--format" && i + 1 < args.length) {
+      format = args[i + 1] as OutputFormat;
+      i++;
+    } else if (args[i] === "--fundamentals") {
+      includeFundamentals = true;
+    } else if (args[i] === "--min-buffett-score" && i + 1 < args.length) {
+      minBuffettScore = parseInt(args[i + 1], 10);
+      i++;
+    } else if (args[i] === "--repeat-alerts") {
+      dedupe = false;
+    }
+  }
+
+  return { market, format, includeFundamentals, minBuffettScore, dedupe };
+}
+
+function parseAddArgs(args: string[]): {
+  market?: Market;
+  notes?: string;
+  alertThreshold?: number;
+  minBuffettScore?: number;
+} {
+  let market: Market | undefined;
+  let notes: string | undefined;
+  let alertThreshold: number | undefined;
+  let minBuffettScore: number | undefined;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--market" && i + 1 < args.length) {
+      market = args[i + 1] as Market;
+      i++;
+    } else if (args[i] === "--notes" && i + 1 < args.length) {
+      notes = args[i + 1];
+      i++;
+    } else if (args[i] === "--alert-threshold" && i + 1 < args.length) {
+      alertThreshold = parseFloat(args[i + 1]);
+      i++;
+    } else if (args[i] === "--min-buffett-score" && i + 1 < args.length) {
+      minBuffettScore = parseInt(args[i + 1], 10);
+      i++;
+    }
+  }
+
+  return { market, notes, alertThreshold, minBuffettScore };
+}
+
+function printFailures(failures: StockFailure[]): void {
+  if (failures.length === 0) {
+    return;
+  }
+
+  console.log(`\n⚠️  Could not check ${failures.length} stock(s):`);
+  for (const failure of failures) {
+    console.log(`  - ${failure.ticker} (${failure.market}): ${failure.reason}`);
+  }
+}
+
+function printHelp(): void {
+  console.log(`
+📊 Watchlist Manager
+
+Usage:
+  npm run watchlist:add -- <ticker>[,ticker2,...] [options]
+  npm run watchlist:remove -- <ticker>[,ticker2,...] [options]
+  npm run watchlist:update -- <ticker> [options]
+  npm run watchlist:list -- [options]
+  npm run watchlist:status -- [options]
+  npm run watchlist:check -- [options]
+
+Commands:
+  add <ticker>      Add one or more stocks (comma-separated)
+  remove <ticker>   Remove one or more stocks (comma-separated)
+  update <ticker>   Update notes, thresholds, or alert settings
+  list              List all watched stocks
+  status            Fetch live price, Williams %R, and status
+  check             Check for oversold, quality, and custom-threshold alerts
+
+Options:
+  --market us|th           Market filter or default market for bulk add
+  --notes '...'            Optional notes
+  --alert-threshold        Williams %R threshold for alerts (e.g. -80)
+  --min-buffett-score      Buffett score threshold for quality alerts
+  --fundamentals           Include Buffett score in status (US stocks, slower)
+  --format text|json|telegram
+  --repeat-alerts          Re-emit alerts even if unchanged since last check
+  --help, -h               Show this help message
+
+Exit codes (check):
+  0  No new alerts
+  1  Fetch/check errors
+  2  New alerts fired
+
+Examples:
+  npm run watchlist:add -- AAPL,MSFT,NVDA
+  npm run watchlist:update -- AAPL --notes 'Core holding' --min-buffett-score 6
+  npm run watchlist:status -- --fundamentals --format telegram
+  npm run watchlist:check -- --min-buffett-score 5
+  npm run screening -- --add-top 5
+`);
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0];
 
+  if (!command || command === "--help" || command === "-h" || args.includes("--help") || args.includes("-h")) {
+    printHelp();
+    return;
+  }
+
   const manager = new WatchListManager();
 
   if (command === "add") {
-    const ticker = args[1];
-    if (!ticker) {
-      console.error("Usage: npm run watchlist:add -- <ticker> [--market us|th] [--notes '...'] [--alert-threshold -80]");
+    const tickerArg = args[1];
+    if (!tickerArg) {
+      console.error("Usage: npm run watchlist:add -- <ticker>[,ticker2,...] [options]");
       process.exit(1);
     }
 
-    let market: Market = "us";
-    let notes: string | undefined;
-    let alertThreshold: number | undefined;
+    const tickers = parseTickerList(tickerArg);
+    const { market, notes, alertThreshold, minBuffettScore } = parseAddArgs(args.slice(2));
+    const { added, skipped } = manager.addMany(tickers, market, notes, alertThreshold, minBuffettScore);
+
+    if (added.length > 0) {
+      console.log(`✅ Added ${added.length} stock(s): ${added.join(", ")}`);
+    }
+    if (skipped.length > 0) {
+      console.log(`⚠️  Already in watchlist: ${skipped.join(", ")}`);
+    }
+    if (added.length === 0 && skipped.length === 0) {
+      process.exit(1);
+    }
+  } else if (command === "remove") {
+    const tickerArg = args[1];
+    if (!tickerArg) {
+      console.error("Usage: npm run watchlist:remove -- <ticker>[,ticker2,...] [options]");
+      process.exit(1);
+    }
+
+    let market: Market | undefined;
+    for (let i = 2; i < args.length; i++) {
+      if (args[i] === "--market" && i + 1 < args.length) {
+        market = args[i + 1] as Market;
+        i++;
+      }
+    }
+
+    const tickers = parseTickerList(tickerArg);
+    const removed: string[] = [];
+    const missing: string[] = [];
+
+    for (const ticker of tickers) {
+      if (manager.remove(ticker, market)) {
+        removed.push(ticker);
+      } else {
+        missing.push(ticker);
+      }
+    }
+
+    if (removed.length > 0) {
+      console.log(`✅ Removed ${removed.length} stock(s): ${removed.join(", ")}`);
+    }
+    if (missing.length > 0) {
+      console.log(`⚠️  Not found: ${missing.join(", ")}`);
+    }
+  } else if (command === "update") {
+    const ticker = args[1];
+    if (!ticker) {
+      console.error("Usage: npm run watchlist:update -- <ticker> [--market us|th] [--notes '...'] [--alert-threshold -80] [--min-buffett-score 5] [--clear-alert-threshold] [--clear-min-buffett-score]");
+      process.exit(1);
+    }
+
+    let market: Market = inferMarketFromTicker(ticker);
+    const updates: Partial<WatchedStock> = {};
 
     for (let i = 2; i < args.length; i++) {
       if (args[i] === "--market" && i + 1 < args.length) {
         market = args[i + 1] as Market;
         i++;
       } else if (args[i] === "--notes" && i + 1 < args.length) {
-        notes = args[i + 1];
+        updates.notes = args[i + 1];
         i++;
       } else if (args[i] === "--alert-threshold" && i + 1 < args.length) {
-        alertThreshold = parseFloat(args[i + 1]);
+        updates.alertThreshold = parseFloat(args[i + 1]);
         i++;
+      } else if (args[i] === "--min-buffett-score" && i + 1 < args.length) {
+        updates.minBuffettScore = parseInt(args[i + 1], 10);
+        i++;
+      } else if (args[i] === "--clear-alert-threshold") {
+        updates.alertThreshold = undefined;
+      } else if (args[i] === "--clear-min-buffett-score") {
+        updates.minBuffettScore = undefined;
       }
     }
 
-    const success = manager.add(ticker, market, notes, alertThreshold);
+    const success = manager.update(ticker, market, updates);
     if (success) {
-      console.log(`✅ Added ${ticker} to watchlist (${market} market)`);
+      console.log(`✅ Updated ${ticker.toUpperCase()} (${market} market)`);
     } else {
-      console.log(`⚠️  ${ticker} is already in watchlist`);
-    }
-  } else if (command === "remove") {
-    const ticker = args[1];
-    if (!ticker) {
-      console.error("Usage: npm run watchlist:remove -- <ticker> [--market us|th]");
+      console.log(`⚠️  ${ticker.toUpperCase()} not found in watchlist`);
       process.exit(1);
     }
-
-    let market: Market | undefined;
-    for (let i = 2; i < args.length; i++) {
-      if (args[i] === "--market" && i + 1 < args.length) {
-        market = args[i + 1] as Market;
-        i++;
-      }
-    }
-
-    const success = manager.remove(ticker, market);
-    if (success) {
-      console.log(`✅ Removed ${ticker} from watchlist`);
-    } else {
-      console.log(`⚠️  ${ticker} not found in watchlist`);
-    }
   } else if (command === "list") {
-    let market: Market | undefined;
-    for (let i = 1; i < args.length; i++) {
-      if (args[i] === "--market" && i + 1 < args.length) {
-        market = args[i + 1] as Market;
-        i++;
-      }
-    }
-
+    const { market, format } = parseCommonArgs(args.slice(1));
     const stocks = market ? manager.getByMarket(market) : manager.getAll();
 
     if (stocks.length === 0) {
-      console.log("📭 Watchlist is empty");
+      if (format === "json") {
+        console.log(JSON.stringify({ total: 0, stocks: [] }, null, 2));
+      } else {
+        console.log("📭 Watchlist is empty");
+      }
+      return;
+    }
+
+    if (format === "json") {
+      console.log(JSON.stringify({ total: stocks.length, stocks }, null, 2));
       return;
     }
 
     console.log(`📋 Watchlist (${stocks.length} stocks):\n`);
-    console.log("Ticker     | Market | Added");
-    console.log("-----------|--------|-------------------");
+    console.log("Ticker     | Market | Added      | Last WR  | Min Buffett | Notes");
+    console.log("-----------|--------|------------|----------|-------------|------");
     for (const stock of stocks) {
       const addedDate = new Date(stock.addedAt).toLocaleDateString();
-      console.log(`${stock.ticker.padEnd(10)} | ${stock.market === "us" ? "US" : "TH"}    | ${addedDate}`);
+      const lastWR = stock.lastWilliamsR !== undefined ? stock.lastWilliamsR.toFixed(1) : "-";
+      const minBuffett = stock.minBuffettScore !== undefined ? `${stock.minBuffettScore}/10` : "-";
+      const notes = stock.notes ?? "-";
+      console.log(
+        `${stock.ticker.padEnd(10)} | ${stock.market === "us" ? "US" : "TH"}    | ${addedDate.padEnd(10)} | ${lastWR.padStart(8)} | ${minBuffett.padStart(11)} | ${notes}`
+      );
     }
-  } else if (command === "--help" || command === "-h" || !command) {
-    console.log(`
-📊 Watchlist Manager
+  } else if (command === "status") {
+    const { market, format, includeFundamentals } = parseCommonArgs(args.slice(1));
+    const stocks = market ? manager.getByMarket(market) : manager.getAll();
 
-Usage:
-  npm run watchlist:add -- <ticker> [options]
-  npm run watchlist:remove -- <ticker> [options]
-  npm run watchlist:list -- [options]
+    if (stocks.length === 0) {
+      if (format === "json") {
+        console.log(JSON.stringify({ total: 0, stocks: [], failures: [], checkedAt: new Date().toISOString() }, null, 2));
+      } else {
+        console.log("📭 Watchlist is empty");
+      }
+      return;
+    }
 
-Commands:
-  add <ticker>      Add a stock to watchlist
-  remove <ticker>  Remove a stock from watchlist
-  list             List all watched stocks
+    if (format === "text") {
+      console.log(`📊 Checking ${stocks.length} stock(s)...`);
+      if (includeFundamentals) {
+        console.log("   Including Buffett scores for US stocks (this may take a while)\n");
+      }
+    }
 
-Options:
-  --market us|th       Market (us or th), default: us
-  --notes '...'        Optional notes for the stock
-  --alert-threshold   Williams %R threshold for alerts (e.g., -80)
-  --help, -h           Show this help message
+    const status = await manager.getStatus(market, includeFundamentals);
 
-Examples:
-  npm run watchlist:add -- AAPL
-  npm run watchlist:add -- AAPL --market us --notes 'Big tech'
-  npm run watchlist:add -- PTT.BK --market th
-  npm run watchlist:remove -- AAPL
-  npm run watchlist:list
-  npm run watchlist:list -- --market us
-`);
+    if (format === "json") {
+      console.log(JSON.stringify(status, null, 2));
+      if (status.failures.length > 0) {
+        process.exit(1);
+      }
+      return;
+    }
+
+    if (format === "telegram") {
+      if (status.stocks.length === 0) {
+        console.log("⚠️ Could not fetch status for any watchlist stocks");
+        printFailures(status.failures);
+        process.exit(1);
+      }
+      console.log(formatStatusTelegram(status.stocks, status.checkedAt));
+      if (status.failures.length > 0) {
+        printFailures(status.failures);
+        process.exit(1);
+      }
+      return;
+    }
+
+    if (status.stocks.length === 0) {
+      console.log("⚠️  Could not fetch status for any watchlist stocks");
+      printFailures(status.failures);
+      process.exit(1);
+      return;
+    }
+
+    console.log(`📊 Watchlist Status (${status.stocks.length}/${status.total} stocks)\n`);
+    console.log("Ticker     | Market | Price      | Change   | Williams %R | Status       | Buffett | Combined");
+    console.log("-----------|--------|------------|----------|-------------|--------------|---------|----------");
+    for (const stock of status.stocks) {
+      const buffett = stock.buffettScore !== undefined ? `${stock.buffettScore}/10` : "-";
+      const combined = stock.combinedScore !== undefined
+        ? `${stock.combinedScore.toFixed(0)}%`
+        : "-";
+      console.log(
+        `${stock.ticker.padEnd(10)} | ${stock.market === "us" ? "US" : "TH"}    | $${stock.price.toFixed(2).padStart(9)} | ${formatChangePercent(stock.changePercent).padStart(8)} | ${stock.williamsR.toFixed(1).padStart(11)} | ${formatStatusLabel(stock.status).padEnd(12)} | ${buffett.padEnd(7)} | ${combined}`
+      );
+    }
+    console.log(`\nChecked at: ${new Date(status.checkedAt).toLocaleString()}`);
+    printFailures(status.failures);
+    if (status.failures.length > 0) {
+      process.exit(1);
+    }
+  } else if (command === "check") {
+    const { market, format, minBuffettScore, dedupe } = parseCommonArgs(args.slice(1));
+    const stocks = market ? manager.getByMarket(market) : manager.getAll();
+
+    if (stocks.length === 0) {
+      if (format === "json") {
+        console.log(JSON.stringify({ total: 0, alerts: [], failures: [], skipped: 0, checkedAt: new Date().toISOString() }, null, 2));
+      } else {
+        console.log("📭 Watchlist is empty");
+      }
+      return;
+    }
+
+    if (format === "text") {
+      console.log(`🔔 Checking alerts for ${stocks.length} stock(s)...\n`);
+    }
+
+    const result = await manager.checkAlerts({ market, minBuffettScore, dedupe });
+
+    if (format === "json") {
+      console.log(JSON.stringify({ total: stocks.length, ...result }, null, 2));
+    } else if (format === "telegram") {
+      console.log(formatAlertsTelegram(result.alerts, result.failures, result.skipped));
+    } else if (result.alerts.length === 0) {
+      console.log("✅ No new alerts — watchlist stocks are within normal ranges or repeats were suppressed");
+      if (result.skipped > 0) {
+        console.log(`ℹ️  ${result.skipped} repeat alert(s) suppressed`);
+      }
+      printFailures(result.failures);
+    } else {
+      console.log(`🔔 New Alerts (${result.alerts.length}):\n`);
+      for (const alert of result.alerts) {
+        console.log(`[${alert.ticker}] ${alert.alertType}`);
+        console.log(`  ${alert.message}`);
+        const extra = alert.buffettScore !== undefined
+          ? ` | Buffett: ${alert.buffettScore}/10`
+          : "";
+        console.log(
+          `  Price: $${alert.currentPrice.toFixed(2)} | Williams %R: ${alert.currentWilliamsR.toFixed(1)}${extra}\n`
+        );
+      }
+      if (result.skipped > 0) {
+        console.log(`ℹ️  ${result.skipped} repeat alert(s) suppressed`);
+      }
+      printFailures(result.failures);
+    }
+
+    if (result.failures.length > 0) {
+      process.exit(1);
+    }
+    if (result.alerts.length > 0) {
+      process.exit(2);
+    }
   } else {
     console.error(`Unknown command: ${command}`);
     console.error("Use 'npm run watchlist:list -- --help' for usage information");
@@ -445,5 +868,8 @@ Examples:
 }
 
 if (import.meta.main) {
-  main().catch(console.error);
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
 }

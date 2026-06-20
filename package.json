@@ -13,7 +13,11 @@
     "compounder": "tsx src/compoundingMachine.ts",
     "watchlist:add": "tsx src/watchList.ts add",
     "watchlist:remove": "tsx src/watchList.ts remove",
-    "watchlist:list": "tsx src/watchList.ts list"
+    "watchlist:update": "tsx src/watchList.ts update",
+    "watchlist:list": "tsx src/watchList.ts list",
+    "watchlist:status": "tsx src/watchList.ts status",
+    "watchlist:check": "tsx src/watchList.ts check",
+    "test": "tsx --test test/**/*.test.ts"
   },
   "dependencies": {
     "sql.js": "^1.14.0",
