@@ -1,4 +1,5 @@
 import { getTickers, getMarketName, Market } from "./tickers.js";
+import { WatchListManager } from "./watchList.js";
 import { PriceDataFetcherSimple } from "./priceDataSimple.js";
 import { calculateWilliamsR } from "./technicalIndicators.js";
 import { SECClient, extractFinancialFacts } from "./secApi.js";
@@ -31,12 +32,17 @@ export interface ScreeningResult {
 
 export type OutputFormat = "text" | "json" | "telegram";
 
+export interface ScreeningRunResult {
+  output: string;
+  qualityStocks: QualityStock[];
+}
+
 export async function runCombinedScreening(
   market: Market = "us",
   minBuffettScore: number = 5,
   topN: number = 10,
   format: OutputFormat = "text"
-): Promise<string> {
+): Promise<ScreeningRunResult> {
   const marketName = getMarketName(market);
   const hasFundamentals = market === "us";
 
@@ -125,18 +131,21 @@ export async function runCombinedScreening(
   console.log(`  Found ${qualityStocks.length} quality stocks`);
 
   if (format === "json") {
-    return JSON.stringify(
-      {
-        totalScanned: tickers.length,
-        oversoldCount: oversoldStocks.length,
-        qualityCount: qualityStocks.length,
-        minBuffettScore,
-        market,
-        topStocks: qualityStocks.slice(0, topN),
-      },
-      null,
-      2
-    );
+    return {
+      output: JSON.stringify(
+        {
+          totalScanned: tickers.length,
+          oversoldCount: oversoldStocks.length,
+          qualityCount: qualityStocks.length,
+          minBuffettScore,
+          market,
+          topStocks: qualityStocks.slice(0, topN),
+        },
+        null,
+        2
+      ),
+      qualityStocks,
+    };
   }
 
   if (format === "telegram") {
@@ -169,7 +178,7 @@ export async function runCombinedScreening(
       lines.push("❌ No quality stocks found matching criteria");
     }
 
-    return lines.join("\n");
+    return { output: lines.join("\n"), qualityStocks };
   }
 
   const lines = [
@@ -220,7 +229,7 @@ export async function runCombinedScreening(
     lines.push("\nScoring: 30% technical + 70% fundamental");
   }
 
-  return lines.join("\n");
+  return { output: lines.join("\n"), qualityStocks };
 }
 
 async function main() {
@@ -229,6 +238,7 @@ async function main() {
   let minBuffettScore = 5;
   let topN = 10;
   let format: OutputFormat = "text";
+  let addTop = 0;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--market" && i + 1 < args.length) {
@@ -249,11 +259,37 @@ async function main() {
     } else if (args[i] === "--format" && i + 1 < args.length) {
       format = args[i + 1] as OutputFormat;
       i++;
+    } else if (args[i] === "--add-top" && i + 1 < args.length) {
+      addTop = parseInt(args[i + 1], 10);
+      i++;
     }
   }
 
   const result = await runCombinedScreening(market, minBuffettScore, topN, format);
-  console.log(result);
+  console.log(result.output);
+
+  if (addTop > 0) {
+    const watchlist = new WatchListManager();
+    const topStocks = result.qualityStocks.slice(0, addTop);
+    const watchlistMarket = market === "bk" ? "th" : "us";
+    const { added, skipped } = watchlist.addMany(
+      topStocks.map((stock) => stock.ticker),
+      watchlistMarket,
+      "Added from screening",
+      undefined,
+      minBuffettScore
+    );
+
+    if (added.length > 0) {
+      console.log(`\n✅ Added ${added.length} screening pick(s) to watchlist: ${added.join(", ")}`);
+    }
+    if (skipped.length > 0) {
+      console.log(`⚠️  Already in watchlist: ${skipped.join(", ")}`);
+    }
+    if (topStocks.length === 0) {
+      console.log("\n⚠️  No screening picks available to add to watchlist");
+    }
+  }
 }
 
 if (import.meta.main) {

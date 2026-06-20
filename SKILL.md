@@ -103,6 +103,7 @@ npm run screening [options]
 | `--min-score` | Minimum Buffett score (0-10) | `5` |
 | `--top-n` | Number of results to show | `10` |
 | `--format` | Output: `text`, `json`, `telegram` | `text` |
+| `--add-top` | Add top N screening picks to the watchlist | off |
 
 **Examples:**
 ```
@@ -111,6 +112,7 @@ npm run screening -- --market us --min-score 7 --top-n 5
 npm run screening -- --market bk
 npm run screening -- --format json
 npm run screening -- --format telegram
+npm run screening -- --add-top 5
 ```
 
 ### 2. Technical Only Scan
@@ -207,7 +209,7 @@ npm run compounder -- --tickers PLTR --show-rejected
   - `npm run compounder -- --tickers AAPL,MSFT,NVDA`
 
 ### 5. Watchlist Management
-Track stocks you're interested in and get alerts when they become oversold or overbought.
+Track stocks you're interested in, monitor live status, and get deduplicated alerts when they become oversold, overbought, or hit quality thresholds.
 
 **Command:**
 ```
@@ -218,25 +220,51 @@ npm run watchlist:<command> -- [options]
 
 | Command | Description |
 |---------|-------------|
-| `add <ticker>` | Add a stock to your watchlist |
-| `remove <ticker>` | Remove a stock from your watchlist |
+| `add <ticker>` | Add one or more comma-separated stocks |
+| `remove <ticker>` | Remove one or more comma-separated stocks |
+| `update <ticker>` | Update notes, alert thresholds, or quality settings |
 | `list` | Show all watched stocks |
+| `status` | Fetch live price, Williams %R, combined score, and status |
+| `check` | Check for oversold, quality, overbought, and custom-threshold alerts |
 
 **Options:**
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--market us\|th` | Market: `us` (US) or `th` (Thai) | `us` |
-| `--notes '...'` | Optional notes for the stock | - |
+| `--market us\|th` | Market filter: `us` (US) or `th` (Thai) | all markets |
+| `--notes '...'` | Optional notes | - |
 | `--alert-threshold` | Williams %R threshold for alerts | - |
+| `--min-buffett-score` | Buffett score threshold for quality alerts | - |
+| `--fundamentals` | Include Buffett score in status (US stocks only, slower) | off |
+| `--format text\|json\|telegram` | Output format (list, status, check) | `text` |
+| `--repeat-alerts` | Re-emit alerts even if unchanged since last check | off |
+
+**Exit codes (`check`):**
+| Code | Meaning |
+|------|---------|
+| `0` | No new alerts |
+| `1` | Fetch/check errors |
+| `2` | New alerts fired |
 
 **Examples:**
 ```
-npm run watchlist:add -- AAPL
-npm run watchlist:add -- AAPL --market us --notes 'Big tech'
+npm run watchlist:add -- AAPL,MSFT,NVDA
+npm run watchlist:add -- AAPL --market us --notes 'Big tech' --min-buffett-score 6
 npm run watchlist:add -- PTT.BK --market th
+npm run watchlist:update -- AAPL --notes 'Core holding' --alert-threshold -85
 npm run watchlist:remove -- AAPL
 npm run watchlist:list
 npm run watchlist:list -- --market us
+npm run watchlist:status
+npm run watchlist:status -- --fundamentals
+npm run watchlist:status -- --market us --format telegram
+npm run watchlist:check
+npm run watchlist:check -- --min-buffett-score 5 --format telegram
+npm run screening -- --add-top 5
+```
+
+**Scheduled monitoring example:**
+```bash
+npm run watchlist:check -- --format telegram
 ```
 
 **Storage:** Watchlist is saved to `~/.claw-screener-watchlist.json`
@@ -322,9 +350,13 @@ npm run screening        # Run combined screening
 npm run technical        # Run technical-only scan
 npm run analyze          # Analyze a stock (requires ticker argument)
 npm run compounder       # Run Compounding Machine screener
-npm run watchlist:add    # Add stock to watchlist
-npm run watchlist:remove # Remove stock from watchlist
+npm run watchlist:add    # Add stock(s) to watchlist
+npm run watchlist:remove # Remove stock(s) from watchlist
+npm run watchlist:update # Update watchlist settings
 npm run watchlist:list   # List watched stocks
+npm run watchlist:status # Live status for watched stocks
+npm run watchlist:check  # Check watchlist alerts
+npm run test             # Run unit tests
 ```
 
 Pass CLI flags after `--`, for example: `npm run screening -- --market us --min-score 7`
