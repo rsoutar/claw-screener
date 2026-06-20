@@ -1,10 +1,14 @@
 import { getTickers, getMarketName, Market } from "./tickers.js";
 import { WatchListManager } from "./watchList.js";
-import { PriceDataFetcherSimple } from "./priceDataSimple.js";
+import { PriceDataFetcher } from "./priceData.js";
 import { calculateWilliamsR } from "./technicalIndicators.js";
 import { SECClient, extractFinancialFacts } from "./secApi.js";
 import { FormulaEngine } from "./formulas.js";
 import { OHLC } from "./database.js";
+import { calculateCombinedScore } from "./watchListUtils.js";
+import { normalizeMarket } from "./types.js";
+import type { OutputFormat } from "./types.js";
+export type { OutputFormat } from "./types.js";
 
 export interface OversoldStock {
   ticker: string;
@@ -30,8 +34,6 @@ export interface ScreeningResult {
   market: Market;
 }
 
-export type OutputFormat = "text" | "json" | "telegram";
-
 export interface ScreeningRunResult {
   output: string;
   qualityStocks: QualityStock[];
@@ -54,8 +56,9 @@ export async function runCombinedScreening(
   console.log(`  Found ${tickers.length} tickers`);
 
   console.log("  Phase 1: Technical screening...");
-  const fetcher = new PriceDataFetcherSimple();
+  const fetcher = new PriceDataFetcher();
   const priceResults = await fetcher.batchFetchPrices(tickers, 90);
+  fetcher.close();
 
   const oversoldStocks: OversoldStock[] = [];
   for (const [ticker, result] of Object.entries(priceResults)) {
@@ -85,7 +88,7 @@ export async function runCombinedScreening(
       buffettScore: 0,
       techScore: (stock.williamsR + 100) / 100,
       fundamentalScore: 0,
-      combinedScore: (stock.williamsR + 100),
+      combinedScore: stock.williamsR + 100,
     }));
   } else {
     console.log("  Phase 2: Fundamental screening...");
@@ -110,7 +113,7 @@ export async function runCombinedScreening(
       if (buffettScore >= minBuffettScore) {
         const techScore = (stock.williamsR + 100) / 100;
         const fundamentalScore = (buffettScore / 10) * 100;
-        const combinedScore = techScore * 0.3 + fundamentalScore * 0.7;
+        const combinedScore = calculateCombinedScore(stock.williamsR, buffettScore);
 
         qualityStocks.push({
           ticker,
@@ -159,9 +162,9 @@ export async function runCombinedScreening(
     ];
 
     if (qualityStocks.length > 0) {
-      lines.push("🌟 Top 10 Quality Opportunities:\n");
+      lines.push(`🌟 Top ${Math.min(topN, qualityStocks.length)} Quality Opportunities:\n`);
 
-      for (let i = 0; i < Math.min(10, qualityStocks.length); i++) {
+      for (let i = 0; i < Math.min(topN, qualityStocks.length); i++) {
         const stock = qualityStocks[i];
         if (hasFundamentals) {
           lines.push(
@@ -169,9 +172,7 @@ export async function runCombinedScreening(
               `| Buffett: ${stock.buffettScore}/10 | WR: ${stock.williamsR.toFixed(1)}`
           );
         } else {
-          lines.push(
-            `${i + 1}. **${stock.ticker}** — WR: ${stock.williamsR.toFixed(1)}`
-          );
+          lines.push(`${i + 1}. **${stock.ticker}** — WR: ${stock.williamsR.toFixed(1)}`);
         }
       }
     } else {
@@ -189,9 +190,7 @@ export async function runCombinedScreening(
     hasFundamentals
       ? "Fundamental: Warren Buffett's 10 formulas on SEC data"
       : "Fundamental: Not available (Thai stocks not in SEC)",
-    hasFundamentals
-      ? `Minimum Buffett Score: ${minBuffettScore}/10\n`
-      : "\n",
+    hasFundamentals ? `Minimum Buffett Score: ${minBuffettScore}/10\n` : "\n",
     "Results:",
   ];
 
@@ -204,9 +203,7 @@ export async function runCombinedScreening(
   );
 
   if (qualityStocks.length > 0) {
-    lines.push(
-      `Top ${Math.min(topN, qualityStocks.length)} Opportunities:\n`
-    );
+    lines.push(`Top ${Math.min(topN, qualityStocks.length)} Opportunities:\n`);
 
     for (let i = 0; i < Math.min(topN, qualityStocks.length); i++) {
       const stock = qualityStocks[i];
@@ -239,14 +236,14 @@ async function main() {
   let topN = 10;
   let format: OutputFormat = "text";
   let addTop = 0;
+  let addGroup: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--market" && i + 1 < args.length) {
-      const marketArg = args[i + 1].toLowerCase();
-      if (marketArg === "us" || marketArg === "bk") {
-        market = marketArg;
-      } else {
-        console.error("Invalid market. Use 'us' or 'bk'");
+      try {
+        market = normalizeMarket(args[i + 1]);
+      } catch (e) {
+        console.error((e as Error).message);
         process.exit(1);
       }
       i++;
@@ -262,6 +259,12 @@ async function main() {
     } else if (args[i] === "--add-top" && i + 1 < args.length) {
       addTop = parseInt(args[i + 1], 10);
       i++;
+    } else if (args[i] === "--add-group" && i + 1 < args.length) {
+      addGroup = args[i + 1];
+      i++;
+    } else if (args[i] === "--config" && i + 1 < args.length) {
+      process.env.CLAW_SCREENER_CONFIG = args[i + 1];
+      i++;
     }
   }
 
@@ -271,13 +274,13 @@ async function main() {
   if (addTop > 0) {
     const watchlist = new WatchListManager();
     const topStocks = result.qualityStocks.slice(0, addTop);
-    const watchlistMarket = market === "bk" ? "th" : "us";
     const { added, skipped } = watchlist.addMany(
       topStocks.map((stock) => stock.ticker),
-      watchlistMarket,
+      market,
       "Added from screening",
       undefined,
-      minBuffettScore
+      minBuffettScore,
+      addGroup
     );
 
     if (added.length > 0) {

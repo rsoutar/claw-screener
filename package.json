@@ -1,11 +1,18 @@
 {
-  "name": "stock-screener",
+  "name": "claw-screener",
   "version": "1.0.0",
   "description": "Stock screener using technical and fundamental analysis",
+  "license": "MIT",
+  "author": "Richard Soutar",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rsoutar/claw-screener.git"
+  },
   "type": "module",
   "scripts": {
     "build": "tsc",
     "build:tsc": "tsc",
+    "typecheck": "tsc --noEmit",
     "dev": "tsx src/screening.ts",
     "screening": "tsx src/screening.ts",
     "technical": "tsx src/technicalOnly.ts",
@@ -17,16 +24,24 @@
     "watchlist:list": "tsx src/watchList.ts list",
     "watchlist:status": "tsx src/watchList.ts status",
     "watchlist:check": "tsx src/watchList.ts check",
-    "test": "tsx --test test/**/*.test.ts"
+    "test": "tsx --test test/**/*.test.ts",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "sql.js": "^1.14.0",
     "yahoo-finance2": "^3.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/sql.js": "^1.4.9",
+    "eslint": "^10.5.0",
+    "prettier": "^3.8.4",
     "tsx": "^4.19.4",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.61.1"
   },
   "engines": {
     "node": ">=20"

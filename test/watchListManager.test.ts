@@ -27,10 +27,7 @@ describe("WatchListManager", () => {
     assert.equal(manager.add("AAPL", "us"), false);
     assert.equal(manager.count(), 1);
 
-    assert.equal(
-      manager.update("AAPL", "us", { notes: "Updated", minBuffettScore: 7 }),
-      true
-    );
+    assert.equal(manager.update("AAPL", "us", { notes: "Updated", minBuffettScore: 7 }), true);
 
     const stock = manager.getAll()[0];
     assert.equal(stock.notes, "Updated");
@@ -49,5 +46,64 @@ describe("WatchListManager", () => {
     assert.deepEqual(result.skipped, ["AAPL"]);
     assert.equal(manager.count(), 3);
     assert.equal(manager.getByMarket("th").length, 1);
+  });
+
+  it("assigns and filters by group", () => {
+    const manager = new WatchListManager(createTempWatchlistPath());
+
+    manager.add("AAPL", "us", undefined, undefined, undefined, "Tech");
+    manager.add("MSFT", "us", undefined, undefined, undefined, "Tech");
+    manager.add("XOM", "us", undefined, undefined, undefined, "Energy");
+
+    assert.equal(manager.count(), 3);
+    assert.equal(manager.getByGroup("Tech").length, 2);
+    assert.equal(manager.getByGroup("Energy").length, 1);
+    assert.equal(manager.getByGroup("Nonexistent").length, 0);
+  });
+
+  it("lists all groups", () => {
+    const manager = new WatchListManager(createTempWatchlistPath());
+
+    manager.add("AAPL", "us", undefined, undefined, undefined, "Tech");
+    manager.add("XOM", "us", undefined, undefined, undefined, "Energy");
+    manager.add("NVDA", "us", undefined, undefined, undefined, "Tech");
+    manager.add("PTT.BK", "th", undefined, undefined, undefined, "Energy");
+
+    assert.deepEqual(manager.listGroups(), ["Energy", "Tech"]);
+  });
+
+  it("returns empty groups list when none have groups", () => {
+    const manager = new WatchListManager(createTempWatchlistPath());
+    manager.add("AAPL", "us");
+    assert.deepEqual(manager.listGroups(), []);
+  });
+
+  it("updates group via update()", () => {
+    const manager = new WatchListManager(createTempWatchlistPath());
+    manager.add("AAPL", "us");
+
+    assert.equal(manager.update("AAPL", "us", { group: "Tech" }), true);
+    assert.equal(manager.getAll()[0].group, "Tech");
+
+    assert.equal(manager.update("AAPL", "us", { group: undefined }), true);
+    assert.equal(manager.getAll()[0].group, undefined);
+  });
+
+  it("addMany assigns group to all added stocks", () => {
+    const manager = new WatchListManager(createTempWatchlistPath());
+    manager.addMany(["AAPL", "MSFT", "NVDA"], undefined, undefined, undefined, undefined, "Tech");
+
+    const tech = manager.getByGroup("Tech");
+    assert.equal(tech.length, 3);
+    assert.ok(tech.every((s) => s.group === "Tech"));
+  });
+
+  it("stocks without group are excluded from group filters", () => {
+    const manager = new WatchListManager(createTempWatchlistPath());
+    manager.add("AAPL", "us", undefined, undefined, undefined, "Tech");
+    manager.add("MSFT", "us");
+
+    assert.equal(manager.getByGroup("Tech").length, 1);
+    assert.equal(manager.getByGroup("Tech")[0].ticker, "AAPL");
   });
 });

@@ -1,9 +1,10 @@
 import YahooFinance from "yahoo-finance2";
-import initSqlJs, { Database as SqlJsDatabase } from "sql.js";
-import { existsSync, readFileSync, writeFileSync } from "fs";
 import { getTickers, Market } from "./tickers.js";
-
-type OutputFormat = "text" | "json";
+import { normalizeMarket } from "./types.js";
+import type { OutputFormat } from "./types.js";
+import { SqliteCache } from "./database.js";
+import { resolveConfig } from "./config.js";
+import { fetchRiskFreeRate } from "./treasury.js";
 
 interface AnnualFinancialPoint {
   date: string;
@@ -66,6 +67,7 @@ interface GrowthStats {
 interface DcfResult {
   intrinsicValuePerShare?: number;
   upsidePercent?: number;
+  discountRateUsed?: number;
 }
 
 interface CompounderRow {
@@ -99,6 +101,7 @@ interface CliOptions {
   minOperatingMargin: number;
   minBuybackPercent: number;
   showRejected: boolean;
+  configPath?: string;
 }
 
 interface FilterEvaluation {
@@ -158,98 +161,9 @@ interface HistoricalPoint {
   dividends?: number;
 }
 
-let sqlPromise: ReturnType<typeof initSqlJs> | null = null;
-
-async function getSql(): Promise<ReturnType<typeof initSqlJs>> {
-  if (!sqlPromise) {
-    sqlPromise = initSqlJs();
-  }
-  return sqlPromise;
-}
-
-class CompounderDataCache {
-  private db: SqlJsDatabase | null = null;
-  private initialized = false;
-  private initPromise: Promise<void> | null = null;
-  private ttlMs: number;
-
-  constructor(private dbPath: string, ttlDays: number) {
-    this.ttlMs = ttlDays * 24 * 60 * 60 * 1000;
-    this.initPromise = this.init();
-  }
-
-  private async init(): Promise<void> {
-    if (this.initialized) return;
-    const SQL = await getSql();
-
-    if (existsSync(this.dbPath)) {
-      const buffer = readFileSync(this.dbPath);
-      this.db = new SQL.Database(buffer);
-    } else {
-      this.db = new SQL.Database();
-    }
-
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS compounder_data (
-        ticker TEXT PRIMARY KEY,
-        payload_json TEXT NOT NULL,
-        fetched_at TEXT NOT NULL
-      )
-    `);
-
-    this.initialized = true;
-  }
-
-  private async ensureInitialized(): Promise<void> {
-    if (!this.initialized && this.initPromise) {
-      await this.initPromise;
-    }
-  }
-
-  async get(ticker: string): Promise<TickerSnapshot | null> {
-    await this.ensureInitialized();
-    if (!this.db) return null;
-
-    const stmt = this.db.prepare(
-      "SELECT payload_json, fetched_at FROM compounder_data WHERE ticker = ?"
-    );
-    stmt.bind([ticker]);
-
-    try {
-      if (!stmt.step()) return null;
-      const row = stmt.getAsObject() as { payload_json: string; fetched_at: string };
-      const age = Date.now() - new Date(row.fetched_at).getTime();
-      if (age > this.ttlMs) return null;
-      return JSON.parse(row.payload_json) as TickerSnapshot;
-    } finally {
-      stmt.free();
-    }
-  }
-
-  async set(ticker: string, snapshot: TickerSnapshot): Promise<void> {
-    await this.ensureInitialized();
-    if (!this.db) return;
-
-    this.db.run(
-      `INSERT OR REPLACE INTO compounder_data (ticker, payload_json, fetched_at)
-       VALUES (?, ?, ?)`,
-      [ticker, JSON.stringify(snapshot), new Date().toISOString()]
-    );
-    this.save();
-  }
-
-  close(): void {
-    if (!this.db) return;
-    this.save();
-    this.db.close();
-    this.db = null;
-  }
-
-  private save(): void {
-    if (!this.db) return;
-    const data = this.db.export();
-    const buffer = Buffer.from(data);
-    writeFileSync(this.dbPath, buffer);
+class CompounderDataCache extends SqliteCache<string, TickerSnapshot> {
+  constructor(dbPath: string, ttlDays: number) {
+    super(dbPath, "compounder_data", "ticker", ttlDays);
   }
 }
 
@@ -381,9 +295,7 @@ class StockDataFetcher {
 
     const operatingMargins = toNumber(quoteSummary.financialData?.operatingMargins);
     const dividendYield = toNumber(quoteSummary.summaryDetail?.dividendYield);
-    const sharesOutstanding = toNumber(
-      quoteSummary.defaultKeyStatistics?.sharesOutstanding
-    );
+    const sharesOutstanding = toNumber(quoteSummary.defaultKeyStatistics?.sharesOutstanding);
     const currentPrice =
       toNumber(quoteSummary.price?.regularMarketPrice) ??
       toNumber(quoteSummary.financialData?.currentPrice);
@@ -449,8 +361,7 @@ function toAnnualFinancialPoints(raw: RawFundamentalsPoint[]): AnnualFinancialPo
     if (!date) continue;
 
     const totalRevenue = toNumber(row.totalRevenue) ?? toNumber(row.operatingRevenue);
-    const netIncome =
-      toNumber(row.netIncomeCommonStockholders) ?? toNumber(row.netIncome);
+    const netIncome = toNumber(row.netIncomeCommonStockholders) ?? toNumber(row.netIncome);
     const dilutedEPS = toNumber(row.dilutedEPS);
     const basicEPS = toNumber(row.basicEPS);
     const dilutedAverageShares = toNumber(row.dilutedAverageShares);
@@ -669,7 +580,7 @@ function computeSharesChange3y(snapshot: TickerSnapshot): number | undefined {
     const latest = quarterlySeries[quarterlySeries.length - 1];
     const threeYearsAgo = quarterlySeries[quarterlySeries.length - 13];
     if (threeYearsAgo > 0) {
-      return ((latest / threeYearsAgo) - 1) * 100;
+      return (latest / threeYearsAgo - 1) * 100;
     }
   }
 
@@ -681,7 +592,7 @@ function computeSharesChange3y(snapshot: TickerSnapshot): number | undefined {
     const latest = annualShareSeries[annualShareSeries.length - 1];
     const threeYearsAgo = annualShareSeries[annualShareSeries.length - 4];
     if (threeYearsAgo > 0) {
-      return ((latest / threeYearsAgo) - 1) * 100;
+      return (latest / threeYearsAgo - 1) * 100;
     }
   }
 
@@ -701,11 +612,14 @@ function computeYieldMetrics(snapshot: TickerSnapshot): {
 } {
   const currentYieldPercent =
     snapshot.dividendYield !== undefined
-      ? (snapshot.dividendYield <= 1 ? snapshot.dividendYield * 100 : snapshot.dividendYield)
+      ? snapshot.dividendYield <= 1
+        ? snapshot.dividendYield * 100
+        : snapshot.dividendYield
       : undefined;
 
   const yields = snapshot.yearlyDividendYields.map((x) => x.yield).filter((x) => x >= 0);
-  const avgYield = yields.length > 0 ? yields.reduce((a, b) => a + b, 0) / yields.length : undefined;
+  const avgYield =
+    yields.length > 0 ? yields.reduce((a, b) => a + b, 0) / yields.length : undefined;
   const avgYield5yPercent = avgYield !== undefined ? avgYield * 100 : undefined;
 
   const yieldVs5yAvgPercent =
@@ -720,7 +634,13 @@ function computeYieldMetrics(snapshot: TickerSnapshot): {
   };
 }
 
-function computeDcf(snapshot: TickerSnapshot, fcfSeries: number[]): DcfResult {
+function computeDcf(
+  snapshot: TickerSnapshot,
+  fcfSeries: number[],
+  discountRate: number,
+  terminalGrowth: number,
+  horizonYears: number
+): DcfResult {
   if (fcfSeries.length < 2) return {};
 
   const sharesOutstanding =
@@ -747,21 +667,18 @@ function computeDcf(snapshot: TickerSnapshot, fcfSeries: number[]): DcfResult {
     const periods = trailing.length - 1;
     growth = Math.pow(last / first, 1 / periods) - 1;
   }
-  growth = clamp(growth, -0.05, 0.20);
-
-  const discountRate = 0.10;
-  const terminalGrowth = 0.025;
+  growth = clamp(growth, -0.05, 0.2);
 
   let pv = 0;
   let projectedFcf = latestFcf;
-  for (let year = 1; year <= 10; year++) {
+  for (let year = 1; year <= horizonYears; year++) {
     projectedFcf *= 1 + growth;
     pv += projectedFcf / Math.pow(1 + discountRate, year);
   }
 
   const terminalValue =
     (projectedFcf * (1 + terminalGrowth)) / Math.max(0.0001, discountRate - terminalGrowth);
-  const discountedTerminal = terminalValue / Math.pow(1 + discountRate, 10);
+  const discountedTerminal = terminalValue / Math.pow(1 + discountRate, horizonYears);
   const intrinsicEquityValue = pv + discountedTerminal;
   const intrinsicValuePerShare = intrinsicEquityValue / sharesOutstanding;
 
@@ -771,17 +688,20 @@ function computeDcf(snapshot: TickerSnapshot, fcfSeries: number[]): DcfResult {
 
   const upsidePercent =
     currentPrice && currentPrice > 0
-      ? ((intrinsicValuePerShare / currentPrice) - 1) * 100
+      ? (intrinsicValuePerShare / currentPrice - 1) * 100
       : undefined;
 
-  return { intrinsicValuePerShare, upsidePercent };
+  return { intrinsicValuePerShare, upsidePercent, discountRateUsed: discountRate };
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-function buildRow(snapshot: TickerSnapshot): CompounderRow {
+function buildRow(
+  snapshot: TickerSnapshot,
+  dcfParams: { discountRate: number; terminalGrowth: number; horizonYears: number }
+): CompounderRow {
   const revenueSeries = snapshot.annualFinancials
     .map((f) => f.totalRevenue)
     .filter((v): v is number => v !== undefined && Number.isFinite(v) && v > 0)
@@ -806,7 +726,13 @@ function buildRow(snapshot: TickerSnapshot): CompounderRow {
   const sharesChange3yPercent = computeSharesChange3y(snapshot);
   const operatingMarginPercent = computeOperatingMarginPercent(snapshot);
   const yieldMetrics = computeYieldMetrics(snapshot);
-  const dcf = computeDcf(snapshot, fcfSeries);
+  const dcf = computeDcf(
+    snapshot,
+    fcfSeries,
+    dcfParams.discountRate,
+    dcfParams.terminalGrowth,
+    dcfParams.horizonYears
+  );
 
   const carlsonQualityScore = computeCarlsonScore({
     revenueGrowth,
@@ -866,7 +792,7 @@ function computeCarlsonScore(input: {
   }
 
   if (input.sharesChange3yPercent !== undefined) {
-    score += clamp((-input.sharesChange3yPercent) / 8, 0, 1) * 10;
+    score += clamp(-input.sharesChange3yPercent / 8, 0, 1) * 10;
   }
 
   if (input.operatingMarginPercent !== undefined) {
@@ -881,10 +807,7 @@ function normalizedGrowthScore(stats: GrowthStats, weight: number): number {
   return (stats.positiveCount / stats.intervals) * weight;
 }
 
-function evaluateCarlsonFilters(
-  row: CompounderRow,
-  options: CliOptions
-): FilterEvaluation {
+function evaluateCarlsonFilters(row: CompounderRow, options: CliOptions): FilterEvaluation {
   const requiredFromIntervals = (intervals: number): number =>
     Math.max(1, Math.round(intervals * 0.8));
   const revenueRequired = requiredFromIntervals(row.revenueGrowth.intervals);
@@ -916,6 +839,7 @@ function evaluateCarlsonFilters(
 
 async function runCompoundingMachine(options: CliOptions): Promise<string> {
   const verbose = options.format !== "json";
+  const config = resolveConfig(options.configPath);
   const tickers =
     options.tickers && options.tickers.length > 0
       ? options.tickers
@@ -923,6 +847,27 @@ async function runCompoundingMachine(options: CliOptions): Promise<string> {
 
   const selectedTickers =
     options.maxTickers !== undefined ? tickers.slice(0, options.maxTickers) : tickers;
+
+  let discountRate = config.dcf.discountRate;
+  if (config.dcf.useLiveRiskFreeRate) {
+    const liveRate = await fetchRiskFreeRate(config.dcf.discountRate);
+    if (liveRate !== config.dcf.discountRate) {
+      if (verbose) {
+        console.log(`  DCF discount rate: ${(liveRate * 100).toFixed(2)}% (live 10Y Treasury)`);
+      }
+      discountRate = liveRate;
+    } else if (verbose) {
+      console.log(`  DCF discount rate: ${(discountRate * 100).toFixed(2)}% (fallback)`);
+    }
+  } else if (verbose) {
+    console.log(`  DCF discount rate: ${(discountRate * 100).toFixed(2)}% (configured)`);
+  }
+
+  const dcfParams = {
+    discountRate,
+    terminalGrowth: config.dcf.terminalGrowth,
+    horizonYears: config.dcf.horizonYears,
+  };
 
   if (verbose) {
     console.log(`📈 Compounding Machine (${options.market.toUpperCase()})`);
@@ -943,7 +888,7 @@ async function runCompoundingMachine(options: CliOptions): Promise<string> {
         return;
       }
 
-      const row = buildRow(snapshot);
+      const row = buildRow(snapshot, dcfParams);
       const evaluation = evaluateCarlsonFilters(row, options);
       if (evaluation.pass) {
         rows.push(row);
@@ -970,7 +915,8 @@ async function runCompoundingMachine(options: CliOptions): Promise<string> {
         scanned: selectedTickers.length,
         qualified: rows.length,
         filters: {
-          growthRule: "Revenue and Net Income: positive YoY trend (>=80% of available yearly intervals; equivalent to 4/5)",
+          growthRule:
+            "Revenue and Net Income: positive YoY trend (>=80% of available yearly intervals; equivalent to 4/5)",
           minRoicPercent: options.minRoic,
           minBuybackPercent: options.minBuybackPercent,
           minOperatingMarginPercent: options.minOperatingMargin,
@@ -1009,13 +955,7 @@ async function runCompoundingMachine(options: CliOptions): Promise<string> {
     );
   }
 
-  return formatTable(
-    selectedTickers.length,
-    rows.length,
-    topRows,
-    options,
-    diagnostics
-  );
+  return formatTable(selectedTickers.length, rows.length, topRows, options, diagnostics);
 }
 
 function formatTable(
@@ -1180,10 +1120,10 @@ function parseArgs(argv: string[]): CliOptions {
     if (!arg.startsWith("--")) continue;
 
     if (arg === "--market" && value) {
-      if (value === "us" || value === "bk") {
-        options.market = value;
-      } else {
-        throw new Error("Invalid --market. Use 'us' or 'bk'.");
+      try {
+        options.market = normalizeMarket(value);
+      } catch (e) {
+        throw new Error((e as Error).message, { cause: e });
       }
       i++;
     } else if (arg === "--tickers" && value) {
@@ -1225,6 +1165,10 @@ function parseArgs(argv: string[]): CliOptions {
       i++;
     } else if (arg === "--show-rejected") {
       options.showRejected = true;
+    } else if (arg === "--config" && value) {
+      options.configPath = value;
+      process.env.CLAW_SCREENER_CONFIG = value;
+      i++;
     }
   }
 

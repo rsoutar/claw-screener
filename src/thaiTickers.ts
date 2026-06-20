@@ -5,21 +5,28 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const TICKER_FILE = join(__dirname, "..", "scripts", "set.txt");
-const MAX_TICKER_LENGTH = 10;
+const TICKER_PATTERN = /^[A-Z0-9][A-Z0-9&-]{0,9}$/;
 
-function loadTickers(): string[] {
+export function parseTickerLines(content: string): string[] {
   const tickers: string[] = [];
-  if (existsSync(TICKER_FILE)) {
-    const content = readFileSync(TICKER_FILE, "utf-8");
-    const lines = content.split("\n");
-    for (let i = 0; i < lines.length; i += 2) {
-      const line = lines[i].trim();
-      if (line && line.length <= MAX_TICKER_LENGTH) {
-        tickers.push(`${line}.BK`);
-      }
+  const seen = new Set<string>();
+  for (const raw of content.split("\n")) {
+    const line = raw.trim();
+    if (line === "SET" || line === "BK") continue;
+    if (TICKER_PATTERN.test(line) && !seen.has(line)) {
+      seen.add(line);
+      tickers.push(`${line}.BK`);
     }
   }
   return tickers;
+}
+
+function loadTickers(): string[] {
+  if (existsSync(TICKER_FILE)) {
+    const content = readFileSync(TICKER_FILE, "utf-8");
+    return parseTickerLines(content);
+  }
+  return [];
 }
 
 export const POPULAR_SET_TICKERS = loadTickers();

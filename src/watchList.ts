@@ -4,16 +4,18 @@ import { FormulaEngine } from "./formulas.js";
 import { calculateWilliamsR } from "./technicalIndicators.js";
 import { fetchPricesForWilliamsR } from "./watchListPrices.js";
 import {
+  buildAlertsForStock,
   calculateCombinedScore,
   formatAlertsTelegram,
   formatChangePercent,
   formatStatusLabel,
   formatStatusTelegram,
   inferMarketFromTicker,
-  OutputFormat,
   parseTickerList,
   shouldEmitAlert,
 } from "./watchListUtils.js";
+import { normalizeMarket } from "./types.js";
+import type { OutputFormat } from "./types.js";
 import type {
   AlertResult,
   CheckAlertsOptions,
@@ -40,7 +42,11 @@ export type {
   WatchListStatus,
 } from "./watchListTypes.js";
 export { calculateCombinedScore, parseTickerList } from "./watchListUtils.js";
-export { fetchPricesForWilliamsR, PRICE_HISTORY_DAYS, WILLIAMS_R_PERIOD } from "./watchListPrices.js";
+export {
+  fetchPricesForWilliamsR,
+  PRICE_HISTORY_DAYS,
+  WILLIAMS_R_PERIOD,
+} from "./watchListPrices.js";
 
 const DEFAULT_WATCHLIST_FILE = join(os.homedir(), ".claw-screener-watchlist.json");
 
@@ -81,12 +87,11 @@ export class WatchListManager {
     market: Market = "us",
     notes?: string,
     alertThreshold?: number,
-    minBuffettScore?: number
+    minBuffettScore?: number,
+    group?: string
   ): boolean {
     const upperTicker = ticker.toUpperCase();
-    const exists = this.data.stocks.some(
-      (s) => s.ticker === upperTicker && s.market === market
-    );
+    const exists = this.data.stocks.some((s) => s.ticker === upperTicker && s.market === market);
 
     if (exists) {
       return false;
@@ -99,6 +104,7 @@ export class WatchListManager {
       notes,
       alertThreshold,
       minBuffettScore,
+      group,
     });
 
     this.persist();
@@ -110,14 +116,22 @@ export class WatchListManager {
     market?: Market,
     notes?: string,
     alertThreshold?: number,
-    minBuffettScore?: number
+    minBuffettScore?: number,
+    group?: string
   ): { added: string[]; skipped: string[] } {
     const added: string[] = [];
     const skipped: string[] = [];
 
     for (const ticker of tickers) {
       const resolvedMarket = market ?? inferMarketFromTicker(ticker);
-      const success = this.add(ticker, resolvedMarket, notes, alertThreshold, minBuffettScore);
+      const success = this.add(
+        ticker,
+        resolvedMarket,
+        notes,
+        alertThreshold,
+        minBuffettScore,
+        group
+      );
       if (success) {
         added.push(ticker);
       } else {
@@ -156,15 +170,23 @@ export class WatchListManager {
     return this.data.stocks.filter((s) => s.market === market);
   }
 
+  getByGroup(group: string): WatchedStock[] {
+    return this.data.stocks.filter((s) => s.group === group);
+  }
+
+  listGroups(): string[] {
+    const groups = new Set<string>();
+    for (const s of this.data.stocks) {
+      if (s.group) groups.add(s.group);
+    }
+    return [...groups].sort();
+  }
+
   count(): number {
     return this.data.stocks.length;
   }
 
-  update(
-    ticker: string,
-    market: Market,
-    updates: Partial<WatchedStock>
-  ): boolean {
+  update(ticker: string, market: Market, updates: Partial<WatchedStock>): boolean {
     const stock = this.data.stocks.find(
       (s) => s.ticker === ticker.toUpperCase() && s.market === market
     );
@@ -211,77 +233,12 @@ export class WatchListManager {
     }
   }
 
-  private buildAlertsForStock(
-    stock: WatchedStock,
-    currentWR: number,
-    currentPrice: number,
-    buffettScore?: number,
-    minBuffettScore?: number
-  ): AlertResult[] {
-    const alerts: AlertResult[] = [];
-
-    if (currentWR < -80) {
-      alerts.push({
-        ticker: stock.ticker,
-        market: stock.market,
-        alertType: "oversold",
-        message: `${stock.ticker} is oversold (Williams %R: ${currentWR.toFixed(1)}) - potential buying opportunity`,
-        currentPrice,
-        currentWilliamsR: currentWR,
-      });
-    } else if (currentWR > -20) {
-      alerts.push({
-        ticker: stock.ticker,
-        market: stock.market,
-        alertType: "overbought",
-        message: `${stock.ticker} is overbought (Williams %R: ${currentWR.toFixed(1)})`,
-        currentPrice,
-        currentWilliamsR: currentWR,
-      });
-    }
-
-    if (stock.alertThreshold !== undefined) {
-      const isBelow = currentWR < stock.alertThreshold;
-      const isAbove = currentWR > -stock.alertThreshold;
-
-      if (isBelow || (stock.alertThreshold > 0 && isAbove)) {
-        alerts.push({
-          ticker: stock.ticker,
-          market: stock.market,
-          alertType: "threshold",
-          message: `${stock.ticker} hit custom threshold (Williams %R: ${currentWR.toFixed(1)}, threshold: ${stock.alertThreshold})`,
-          currentPrice,
-          currentWilliamsR: currentWR,
-        });
-      }
-    }
-
-    const qualityThreshold = stock.minBuffettScore ?? minBuffettScore;
-    if (
-      qualityThreshold !== undefined &&
-      currentWR < -80 &&
-      buffettScore !== undefined &&
-      buffettScore >= qualityThreshold
-    ) {
-      const combinedScore = calculateCombinedScore(currentWR, buffettScore);
-      alerts.push({
-        ticker: stock.ticker,
-        market: stock.market,
-        alertType: "quality",
-        message: `${stock.ticker} is oversold with strong fundamentals (Buffett: ${buffettScore}/10, combined: ${combinedScore.toFixed(0)}%)`,
-        currentPrice,
-        currentWilliamsR: currentWR,
-        buffettScore,
-        combinedScore,
-      });
-    }
-
-    return alerts;
-  }
-
   async checkAlerts(options: CheckAlertsOptions = {}): Promise<CheckAlertsResult> {
-    const { market, minBuffettScore, dedupe = true } = options;
-    const stocks = market ? this.getByMarket(market) : this.getAll();
+    const { market, group, minBuffettScore, dedupe = true } = options;
+    let stocks = market ? this.getByMarket(market) : this.getAll();
+    if (group) {
+      stocks = stocks.filter((s) => s.group === group);
+    }
     const alerts: AlertResult[] = [];
     const failures: StockFailure[] = [];
     let skipped = 0;
@@ -318,7 +275,7 @@ export class WatchListManager {
 
         const currentPrice = prices[prices.length - 1].Close;
         const buffettScore = await this.getBuffettScore(secClient, stock.ticker, stock.market);
-        const candidateAlerts = this.buildAlertsForStock(
+        const candidateAlerts = buildAlertsForStock(
           stock,
           currentWR,
           currentPrice,
@@ -380,9 +337,13 @@ export class WatchListManager {
 
   async getStatus(
     market?: Market,
-    includeFundamentals: boolean = false
+    includeFundamentals: boolean = false,
+    group?: string
   ): Promise<WatchListStatus> {
-    const stocks = market ? this.getByMarket(market) : this.getAll();
+    let stocks = market ? this.getByMarket(market) : this.getAll();
+    if (group) {
+      stocks = stocks.filter((s) => s.group === group);
+    }
     const status: WatchListStatus = {
       total: stocks.length,
       stocks: [],
@@ -418,9 +379,11 @@ export class WatchListManager {
         }
 
         const currentPrice = prices[prices.length - 1].Close;
-        const priceChange = prices.length > 1
-          ? ((currentPrice - prices[prices.length - 2].Close) / prices[prices.length - 2].Close) * 100
-          : 0;
+        const priceChange =
+          prices.length > 1
+            ? ((currentPrice - prices[prices.length - 2].Close) / prices[prices.length - 2].Close) *
+              100
+            : 0;
 
         const buffettScore = includeFundamentals
           ? await this.getBuffettScore(secClient, stock.ticker, stock.market)
@@ -442,9 +405,8 @@ export class WatchListManager {
           stockStatus = "alert";
         }
 
-        const combinedScore = buffettScore !== undefined
-          ? calculateCombinedScore(currentWR, buffettScore)
-          : undefined;
+        const combinedScore =
+          buffettScore !== undefined ? calculateCombinedScore(currentWR, buffettScore) : undefined;
 
         status.stocks.push({
           ticker: stock.ticker,
@@ -490,6 +452,7 @@ export class WatchListManager {
 
 interface CommonCliOptions {
   market?: Market;
+  group?: string;
   format: OutputFormat;
   includeFundamentals: boolean;
   minBuffettScore?: number;
@@ -498,6 +461,7 @@ interface CommonCliOptions {
 
 function parseCommonArgs(args: string[]): CommonCliOptions {
   let market: Market | undefined;
+  let group: string | undefined;
   let format: OutputFormat = "text";
   let includeFundamentals = false;
   let minBuffettScore: number | undefined;
@@ -505,7 +469,15 @@ function parseCommonArgs(args: string[]): CommonCliOptions {
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--market" && i + 1 < args.length) {
-      market = args[i + 1] as Market;
+      try {
+        market = normalizeMarket(args[i + 1]);
+      } catch {
+        console.error(`Invalid market: ${args[i + 1]}. Use 'us', 'th', or 'bk'.`);
+        process.exit(1);
+      }
+      i++;
+    } else if (args[i] === "--group" && i + 1 < args.length) {
+      group = args[i + 1];
       i++;
     } else if (args[i] === "--format" && i + 1 < args.length) {
       format = args[i + 1] as OutputFormat;
@@ -520,23 +492,33 @@ function parseCommonArgs(args: string[]): CommonCliOptions {
     }
   }
 
-  return { market, format, includeFundamentals, minBuffettScore, dedupe };
+  return { market, group, format, includeFundamentals, minBuffettScore, dedupe };
 }
 
 function parseAddArgs(args: string[]): {
   market?: Market;
+  group?: string;
   notes?: string;
   alertThreshold?: number;
   minBuffettScore?: number;
 } {
   let market: Market | undefined;
+  let group: string | undefined;
   let notes: string | undefined;
   let alertThreshold: number | undefined;
   let minBuffettScore: number | undefined;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--market" && i + 1 < args.length) {
-      market = args[i + 1] as Market;
+      try {
+        market = normalizeMarket(args[i + 1]);
+      } catch {
+        console.error(`Invalid market: ${args[i + 1]}. Use 'us', 'th', or 'bk'.`);
+        process.exit(1);
+      }
+      i++;
+    } else if (args[i] === "--group" && i + 1 < args.length) {
+      group = args[i + 1];
       i++;
     } else if (args[i] === "--notes" && i + 1 < args.length) {
       notes = args[i + 1];
@@ -550,7 +532,7 @@ function parseAddArgs(args: string[]): {
     }
   }
 
-  return { market, notes, alertThreshold, minBuffettScore };
+  return { market, group, notes, alertThreshold, minBuffettScore };
 }
 
 function printFailures(failures: StockFailure[]): void {
@@ -586,12 +568,14 @@ Commands:
 
 Options:
   --market us|th           Market filter or default market for bulk add
+  --group <name>           Filter by group, or assign group on add/update
   --notes '...'            Optional notes
   --alert-threshold        Williams %R threshold for alerts (e.g. -80)
   --min-buffett-score      Buffett score threshold for quality alerts
   --fundamentals           Include Buffett score in status (US stocks, slower)
   --format text|json|telegram
   --repeat-alerts          Re-emit alerts even if unchanged since last check
+  --clear-group            Remove group assignment (update command only)
   --help, -h               Show this help message
 
 Exit codes (check):
@@ -600,10 +584,11 @@ Exit codes (check):
   2  New alerts fired
 
 Examples:
-  npm run watchlist:add -- AAPL,MSFT,NVDA
+  npm run watchlist:add -- AAPL,MSFT,NVDA --group "Tech"
   npm run watchlist:update -- AAPL --notes 'Core holding' --min-buffett-score 6
+  npm run watchlist:list -- --group "Tech"
   npm run watchlist:status -- --fundamentals --format telegram
-  npm run watchlist:check -- --min-buffett-score 5
+  npm run watchlist:check -- --group "Tech" --min-buffett-score 5
   npm run screening -- --add-top 5
 `);
 }
@@ -612,7 +597,13 @@ async function main() {
   const args = process.argv.slice(2);
   const command = args[0];
 
-  if (!command || command === "--help" || command === "-h" || args.includes("--help") || args.includes("-h")) {
+  if (
+    !command ||
+    command === "--help" ||
+    command === "-h" ||
+    args.includes("--help") ||
+    args.includes("-h")
+  ) {
     printHelp();
     return;
   }
@@ -627,8 +618,15 @@ async function main() {
     }
 
     const tickers = parseTickerList(tickerArg);
-    const { market, notes, alertThreshold, minBuffettScore } = parseAddArgs(args.slice(2));
-    const { added, skipped } = manager.addMany(tickers, market, notes, alertThreshold, minBuffettScore);
+    const { market, group, notes, alertThreshold, minBuffettScore } = parseAddArgs(args.slice(2));
+    const { added, skipped } = manager.addMany(
+      tickers,
+      market,
+      notes,
+      alertThreshold,
+      minBuffettScore,
+      group
+    );
 
     if (added.length > 0) {
       console.log(`✅ Added ${added.length} stock(s): ${added.join(", ")}`);
@@ -649,7 +647,12 @@ async function main() {
     let market: Market | undefined;
     for (let i = 2; i < args.length; i++) {
       if (args[i] === "--market" && i + 1 < args.length) {
-        market = args[i + 1] as Market;
+        try {
+          market = normalizeMarket(args[i + 1]);
+        } catch {
+          console.error(`Invalid market: ${args[i + 1]}. Use 'us', 'th', or 'bk'.`);
+          process.exit(1);
+        }
         i++;
       }
     }
@@ -675,7 +678,9 @@ async function main() {
   } else if (command === "update") {
     const ticker = args[1];
     if (!ticker) {
-      console.error("Usage: npm run watchlist:update -- <ticker> [--market us|th] [--notes '...'] [--alert-threshold -80] [--min-buffett-score 5] [--clear-alert-threshold] [--clear-min-buffett-score]");
+      console.error(
+        "Usage: npm run watchlist:update -- <ticker> [--market us|th] [--notes '...'] [--alert-threshold -80] [--min-buffett-score 5] [--clear-alert-threshold] [--clear-min-buffett-score]"
+      );
       process.exit(1);
     }
 
@@ -684,7 +689,12 @@ async function main() {
 
     for (let i = 2; i < args.length; i++) {
       if (args[i] === "--market" && i + 1 < args.length) {
-        market = args[i + 1] as Market;
+        try {
+          market = normalizeMarket(args[i + 1]);
+        } catch {
+          console.error(`Invalid market: ${args[i + 1]}. Use 'us', 'th', or 'bk'.`);
+          process.exit(1);
+        }
         i++;
       } else if (args[i] === "--notes" && i + 1 < args.length) {
         updates.notes = args[i + 1];
@@ -699,6 +709,11 @@ async function main() {
         updates.alertThreshold = undefined;
       } else if (args[i] === "--clear-min-buffett-score") {
         updates.minBuffettScore = undefined;
+      } else if (args[i] === "--group" && i + 1 < args.length) {
+        updates.group = args[i + 1];
+        i++;
+      } else if (args[i] === "--clear-group") {
+        updates.group = undefined;
       }
     }
 
@@ -710,8 +725,11 @@ async function main() {
       process.exit(1);
     }
   } else if (command === "list") {
-    const { market, format } = parseCommonArgs(args.slice(1));
-    const stocks = market ? manager.getByMarket(market) : manager.getAll();
+    const { market, group, format } = parseCommonArgs(args.slice(1));
+    let stocks = market ? manager.getByMarket(market) : manager.getAll();
+    if (group) {
+      stocks = stocks.filter((s) => s.group === group);
+    }
 
     if (stocks.length === 0) {
       if (format === "json") {
@@ -727,25 +745,40 @@ async function main() {
       return;
     }
 
-    console.log(`📋 Watchlist (${stocks.length} stocks):\n`);
-    console.log("Ticker     | Market | Added      | Last WR  | Min Buffett | Notes");
-    console.log("-----------|--------|------------|----------|-------------|------");
+    const groups = manager.listGroups();
+    if (groups.length > 0) {
+      console.log(`📋 Watchlist (${stocks.length} stocks, groups: ${groups.join(", ")}):\n`);
+    } else {
+      console.log(`📋 Watchlist (${stocks.length} stocks):\n`);
+    }
+    console.log("Ticker     | Market | Group      | Added      | Last WR  | Min Buffett | Notes");
+    console.log("-----------|--------|------------|------------|----------|-------------|------");
     for (const stock of stocks) {
       const addedDate = new Date(stock.addedAt).toLocaleDateString();
       const lastWR = stock.lastWilliamsR !== undefined ? stock.lastWilliamsR.toFixed(1) : "-";
       const minBuffett = stock.minBuffettScore !== undefined ? `${stock.minBuffettScore}/10` : "-";
       const notes = stock.notes ?? "-";
+      const groupLabel = stock.group ?? "-";
       console.log(
-        `${stock.ticker.padEnd(10)} | ${stock.market === "us" ? "US" : "TH"}    | ${addedDate.padEnd(10)} | ${lastWR.padStart(8)} | ${minBuffett.padStart(11)} | ${notes}`
+        `${stock.ticker.padEnd(10)} | ${stock.market === "us" ? "US" : "TH"}    | ${groupLabel.padEnd(10)} | ${addedDate.padEnd(10)} | ${lastWR.padStart(8)} | ${minBuffett.padStart(11)} | ${notes}`
       );
     }
   } else if (command === "status") {
-    const { market, format, includeFundamentals } = parseCommonArgs(args.slice(1));
-    const stocks = market ? manager.getByMarket(market) : manager.getAll();
+    const { market, group, format, includeFundamentals } = parseCommonArgs(args.slice(1));
+    let stocks = market ? manager.getByMarket(market) : manager.getAll();
+    if (group) {
+      stocks = stocks.filter((s) => s.group === group);
+    }
 
     if (stocks.length === 0) {
       if (format === "json") {
-        console.log(JSON.stringify({ total: 0, stocks: [], failures: [], checkedAt: new Date().toISOString() }, null, 2));
+        console.log(
+          JSON.stringify(
+            { total: 0, stocks: [], failures: [], checkedAt: new Date().toISOString() },
+            null,
+            2
+          )
+        );
       } else {
         console.log("📭 Watchlist is empty");
       }
@@ -759,7 +792,7 @@ async function main() {
       }
     }
 
-    const status = await manager.getStatus(market, includeFundamentals);
+    const status = await manager.getStatus(market, includeFundamentals, group);
 
     if (format === "json") {
       console.log(JSON.stringify(status, null, 2));
@@ -791,13 +824,16 @@ async function main() {
     }
 
     console.log(`📊 Watchlist Status (${status.stocks.length}/${status.total} stocks)\n`);
-    console.log("Ticker     | Market | Price      | Change   | Williams %R | Status       | Buffett | Combined");
-    console.log("-----------|--------|------------|----------|-------------|--------------|---------|----------");
+    console.log(
+      "Ticker     | Market | Price      | Change   | Williams %R | Status       | Buffett | Combined"
+    );
+    console.log(
+      "-----------|--------|------------|----------|-------------|--------------|---------|----------"
+    );
     for (const stock of status.stocks) {
       const buffett = stock.buffettScore !== undefined ? `${stock.buffettScore}/10` : "-";
-      const combined = stock.combinedScore !== undefined
-        ? `${stock.combinedScore.toFixed(0)}%`
-        : "-";
+      const combined =
+        stock.combinedScore !== undefined ? `${stock.combinedScore.toFixed(0)}%` : "-";
       console.log(
         `${stock.ticker.padEnd(10)} | ${stock.market === "us" ? "US" : "TH"}    | $${stock.price.toFixed(2).padStart(9)} | ${formatChangePercent(stock.changePercent).padStart(8)} | ${stock.williamsR.toFixed(1).padStart(11)} | ${formatStatusLabel(stock.status).padEnd(12)} | ${buffett.padEnd(7)} | ${combined}`
       );
@@ -808,12 +844,21 @@ async function main() {
       process.exit(1);
     }
   } else if (command === "check") {
-    const { market, format, minBuffettScore, dedupe } = parseCommonArgs(args.slice(1));
-    const stocks = market ? manager.getByMarket(market) : manager.getAll();
+    const { market, group, format, minBuffettScore, dedupe } = parseCommonArgs(args.slice(1));
+    let stocks = market ? manager.getByMarket(market) : manager.getAll();
+    if (group) {
+      stocks = stocks.filter((s) => s.group === group);
+    }
 
     if (stocks.length === 0) {
       if (format === "json") {
-        console.log(JSON.stringify({ total: 0, alerts: [], failures: [], skipped: 0, checkedAt: new Date().toISOString() }, null, 2));
+        console.log(
+          JSON.stringify(
+            { total: 0, alerts: [], failures: [], skipped: 0, checkedAt: new Date().toISOString() },
+            null,
+            2
+          )
+        );
       } else {
         console.log("📭 Watchlist is empty");
       }
@@ -824,14 +869,16 @@ async function main() {
       console.log(`🔔 Checking alerts for ${stocks.length} stock(s)...\n`);
     }
 
-    const result = await manager.checkAlerts({ market, minBuffettScore, dedupe });
+    const result = await manager.checkAlerts({ market, group, minBuffettScore, dedupe });
 
     if (format === "json") {
       console.log(JSON.stringify({ total: stocks.length, ...result }, null, 2));
     } else if (format === "telegram") {
       console.log(formatAlertsTelegram(result.alerts, result.failures, result.skipped));
     } else if (result.alerts.length === 0) {
-      console.log("✅ No new alerts — watchlist stocks are within normal ranges or repeats were suppressed");
+      console.log(
+        "✅ No new alerts — watchlist stocks are within normal ranges or repeats were suppressed"
+      );
       if (result.skipped > 0) {
         console.log(`ℹ️  ${result.skipped} repeat alert(s) suppressed`);
       }
@@ -841,9 +888,8 @@ async function main() {
       for (const alert of result.alerts) {
         console.log(`[${alert.ticker}] ${alert.alertType}`);
         console.log(`  ${alert.message}`);
-        const extra = alert.buffettScore !== undefined
-          ? ` | Buffett: ${alert.buffettScore}/10`
-          : "";
+        const extra =
+          alert.buffettScore !== undefined ? ` | Buffett: ${alert.buffettScore}/10` : "";
         console.log(
           `  Price: $${alert.currentPrice.toFixed(2)} | Williams %R: ${alert.currentWilliamsR.toFixed(1)}${extra}\n`
         );

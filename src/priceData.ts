@@ -1,7 +1,10 @@
 import YahooFinance from "yahoo-finance2";
 import { PriceDataManager, OHLC } from "./database.js";
 
-const yahooFinance = new YahooFinance({ suppressNotices: ["ripHistorical"], validation: { logErrors: false } });
+const yahooFinance = new YahooFinance({
+  suppressNotices: ["ripHistorical"],
+  validation: { logErrors: false },
+});
 
 export interface PriceResult {
   ticker: string;
@@ -71,9 +74,7 @@ export class PriceDataFetcher {
     }
 
     for (const chunk of chunks) {
-      const promises = chunk.map((ticker) =>
-        this.fetchStockPrices(ticker, days)
-      );
+      const promises = chunk.map((ticker) => this.fetchStockPrices(ticker, days));
       const batchResults = await Promise.all(promises);
       for (const result of batchResults) {
         results[result.ticker] = result;

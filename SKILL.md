@@ -39,6 +39,7 @@ A stock screener that combines technical analysis (Williams %R oversold signals)
 ## When to Use
 
 Use this skill when you need to:
+
 - Find oversold stocks with strong fundamentals
 - Screen for quality stocks using Buffett's 10 formulas
 - Screen for long-term compounders using Carlson filters (ROIC, growth, buybacks)
@@ -89,9 +90,11 @@ Before running any command below, `cd` to the repository root:
 This skill provides the following capabilities:
 
 ### 1. Combined Screening
+
 Finds stocks that are both technically oversold (Williams %R < -80) and fundamentally strong (Buffett score >= threshold).
 
 **Command:**
+
 ```
 npm run screening [options]
 ```
@@ -106,6 +109,7 @@ npm run screening [options]
 | `--add-top` | Add top N screening picks to the watchlist | off |
 
 **Examples:**
+
 ```
 npm run screening
 npm run screening -- --market us --min-score 7 --top-n 5
@@ -116,9 +120,11 @@ npm run screening -- --add-top 5
 ```
 
 ### 2. Technical Only Scan
+
 Fast oversold scan using Williams %R indicator only. No SEC data required. Works for both US and Thai markets.
 
 **Command:**
+
 ```
 npm run technical [options]
 ```
@@ -132,6 +138,7 @@ npm run technical [options]
 | `--format` | Output: `text`, `json`, `telegram` | `text` |
 
 **Examples:**
+
 ```
 npm run technical
 npm run technical -- --threshold -70 --top-n 50
@@ -139,9 +146,11 @@ npm run technical -- --market bk
 ```
 
 ### 3. Analyze Stock
+
 Deep analysis of a single stock using Buffett's 10 formulas.
 
 **Command:**
+
 ```
 npm run analyze -- <ticker> [options]
 ```
@@ -152,6 +161,7 @@ npm run analyze -- <ticker> [options]
 | `--format` | Output: `text`, `json`, `telegram` | `text` |
 
 **Examples:**
+
 ```
 npm run analyze -- AAPL
 npm run analyze -- MSFT --format telegram
@@ -160,7 +170,9 @@ npm run analyze -- PTT.BK
 ```
 
 ### 4. Compounding Machine
+
 Screens for "compounders" using Carlson-style filters:
+
 - Revenue and net income YoY trend strength
 - ROIC threshold (default >15%)
 - Share count reduction over 3 years (buyback signal)
@@ -168,6 +180,7 @@ Screens for "compounders" using Carlson-style filters:
 - Includes current yield vs 5-year average and a simple 10-year DCF context
 
 **Command:**
+
 ```
 npm run compounder [options]
 ```
@@ -189,6 +202,7 @@ npm run compounder [options]
 | `--show-rejected` | Include failed tickers with reasons in output | off |
 
 **Examples:**
+
 ```
 npm run compounder
 npm run compounder -- --tickers AAPL,MSFT,NVDA --top-n 10
@@ -197,35 +211,39 @@ npm run compounder -- --tickers PLTR --show-rejected
 ```
 
 **Runtime / Caching Notes:**
+
 - First uncached run on full US universe can take ~20-30+ minutes.
 - This is expected: each ticker requires multiple Yahoo fundamentals/quote requests and retry backoff for rate-limit resilience.
 - Subsequent runs are much faster due to SQLite caching (`sec_cache.db`, TTL default 7 days).
 - For quick checks, run smaller scans first (for example `--max-tickers 50` or specific `--tickers`).
 
 **Agent Guidance for User Messaging:**
+
 - If user runs full-universe Compounding Machine scan, explicitly warn that initial run may take ~20-30 minutes.
 - Suggest quick-test alternatives while waiting:
   - `npm run compounder -- --max-tickers 50`
   - `npm run compounder -- --tickers AAPL,MSFT,NVDA`
 
 ### 5. Watchlist Management
+
 Track stocks you're interested in, monitor live status, and get deduplicated alerts when they become oversold, overbought, or hit quality thresholds.
 
 **Command:**
+
 ```
 npm run watchlist:<command> -- [options]
 ```
 
 **Commands:**
 
-| Command | Description |
-|---------|-------------|
-| `add <ticker>` | Add one or more comma-separated stocks |
-| `remove <ticker>` | Remove one or more comma-separated stocks |
-| `update <ticker>` | Update notes, alert thresholds, or quality settings |
-| `list` | Show all watched stocks |
-| `status` | Fetch live price, Williams %R, combined score, and status |
-| `check` | Check for oversold, quality, overbought, and custom-threshold alerts |
+| Command           | Description                                                          |
+| ----------------- | -------------------------------------------------------------------- |
+| `add <ticker>`    | Add one or more comma-separated stocks                               |
+| `remove <ticker>` | Remove one or more comma-separated stocks                            |
+| `update <ticker>` | Update notes, alert thresholds, or quality settings                  |
+| `list`            | Show all watched stocks                                              |
+| `status`          | Fetch live price, Williams %R, combined score, and status            |
+| `check`           | Check for oversold, quality, overbought, and custom-threshold alerts |
 
 **Options:**
 | Flag | Description | Default |
@@ -246,6 +264,7 @@ npm run watchlist:<command> -- [options]
 | `2` | New alerts fired |
 
 **Examples:**
+
 ```
 npm run watchlist:add -- AAPL,MSFT,NVDA
 npm run watchlist:add -- AAPL --market us --notes 'Big tech' --min-buffett-score 6
@@ -263,6 +282,7 @@ npm run screening -- --add-top 5
 ```
 
 **Scheduled monitoring example:**
+
 ```bash
 npm run watchlist:check -- --format telegram
 ```
@@ -273,18 +293,18 @@ npm run watchlist:check -- --format telegram
 
 The fundamental analysis evaluates stocks against Warren Buffett's criteria:
 
-| # | Formula | Target | Description |
-|---|---------|--------|-------------|
-| 1 | Cash Test | > Total Debt | Cash covers all debt |
-| 2 | Debt-to-Equity | < 0.5 | Low leverage |
-| 3 | Return on Equity | > 15% | Efficient use of capital |
-| 4 | Current Ratio | > 1.5 | Short-term liquidity |
-| 5 | Operating Margin | > 12% | Operational efficiency |
-| 6 | Asset Turnover | > 0.5 | Asset efficiency |
-| 7 | Interest Coverage | > 3x | Ability to pay interest |
-| 8 | Earnings Stability | Positive | Consistent profitability |
-| 9 | Free Cash Flow | > 0 | Cash generation |
-| 10 | Capital Allocation | > 15% ROE | Management effectiveness |
+| #   | Formula            | Target       | Description              |
+| --- | ------------------ | ------------ | ------------------------ |
+| 1   | Cash Test          | > Total Debt | Cash covers all debt     |
+| 2   | Debt-to-Equity     | < 0.5        | Low leverage             |
+| 3   | Return on Equity   | > 15%        | Efficient use of capital |
+| 4   | Current Ratio      | > 1.5        | Short-term liquidity     |
+| 5   | Operating Margin   | > 12%        | Operational efficiency   |
+| 6   | Asset Turnover     | > 0.5        | Asset efficiency         |
+| 7   | Interest Coverage  | > 3x         | Ability to pay interest  |
+| 8   | Earnings Stability | Positive     | Consistent profitability |
+| 9   | Free Cash Flow     | > 0          | Cash generation          |
+| 10  | Capital Allocation | > 15% ROE    | Management effectiveness |
 
 **Scoring:** Each passing formula earns 1 point. Maximum score: 10/10.
 
@@ -324,11 +344,11 @@ npm install
 
 This skill creates and manages the following files:
 
-| File | Location | Purpose | TTL |
-|------|----------|---------|-----|
-| Watchlist | `~/.claw-screener-watchlist.json` | User's stock watchlist | Permanent |
-| SEC Cache | `sec_cache.db` | Cached SEC EDGAR financial data | 7 days (default) |
-| Price Cache | `price_cache.db` | Cached stock price data | 1 day (default) |
+| File        | Location                          | Purpose                         | TTL              |
+| ----------- | --------------------------------- | ------------------------------- | ---------------- |
+| Watchlist   | `~/.claw-screener-watchlist.json` | User's stock watchlist          | Permanent        |
+| SEC Cache   | `sec_cache.db`                    | Cached SEC EDGAR financial data | 7 days (default) |
+| Price Cache | `price_cache.db`                  | Cached stock price data         | 1 day (default)  |
 
 ### Cache Management
 
@@ -338,6 +358,7 @@ This skill creates and manages the following files:
 - Cache improves performance significantly on subsequent runs
 
 ### Notes
+
 - First run on full US universe can take ~20-30+ minutes (expected behavior)
 - Subsequent runs are much faster due to caching
 - For quick tests, use `--max-tickers 50` or specific `--tickers`
@@ -364,6 +385,7 @@ Pass CLI flags after `--`, for example: `npm run screening -- --market us --min-
 ## Output Format Examples
 
 ### Text (Default)
+
 ```
 📊 Combined Quality Screening (US (S&P 500))
 Technical: Oversold signals (Williams %R < -80)
@@ -382,6 +404,7 @@ Top 10 Opportunities:
 ```
 
 ### Telegram
+
 ```
 📊 Combined Quality Screening (US (S&P 500))
 Scanned: 503 stocks
@@ -400,12 +423,23 @@ Quality (Buffett ≥5/10): 8
 - Thai market (`bk`) uses Yahoo Finance only — no SEC fundamental data.
 - Commands fail if run outside the repo root or before `npm install`.
 - Yahoo rate limits can slow bulk scans; SQLite caches (`sec_cache.db`, `price_cache.db`) speed up repeat runs.
+- SEC EDGAR requires a real contact email in the User-Agent. Set `SEC_USER_AGENT` env var to avoid the placeholder warning.
+- DCF discount rate defaults to live 10Y Treasury yield; if the fetch is blocked, it falls back to 10%.
+
+## Configuration
+
+All entry points accept `--config <path>` to load a JSON config file. Config is resolved: CLI > env vars > `~/.claw-screener/config.json` > `.claw-screener.json` > defaults.
+
+Key env vars: `SEC_USER_AGENT`, `CLAW_SCREENER_WATCHLIST_FILE`, `SEC_DB_PATH`, `PRICE_DB_PATH`, `YAHOO_CONCURRENCY`, `DCF_DISCOUNT_RATE`. See README for the full list.
 
 ## Verification
 
 From the repository root:
 
 ```bash
+npm run typecheck
+npm run lint
+npm test
 npm run analyze -- AAPL --format json
 npm run technical -- --market us --top-n 3
 ```
