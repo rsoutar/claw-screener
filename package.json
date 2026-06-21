@@ -31,12 +31,12 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "sql.js": "^1.14.0",
+    "sql.js": "^1.14.1",
     "yahoo-finance2": "^3.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/sql.js": "^1.4.9",
+    "@types/sql.js": "^1.4.11",
     "eslint": "^10.5.0",
     "prettier": "^3.8.4",
     "tsx": "^4.19.4",
