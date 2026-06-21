@@ -24,7 +24,7 @@
     "watchlist:list": "tsx src/watchList.ts list",
     "watchlist:status": "tsx src/watchList.ts status",
     "watchlist:check": "tsx src/watchList.ts check",
-    "test": "tsx --test test/**/*.test.ts",
+    "test": "tsx --test test/*.test.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

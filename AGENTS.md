@@ -10,7 +10,7 @@ Always run these before considering work complete:
 npm run typecheck     # tsc --noEmit (type checking without emitting)
 npm run lint          # eslint .
 npm run format:check  # prettier --check .
-npm test              # tsx --test test/**/*.test.ts
+npm test              # tsx --test test/*.test.ts
 npm run build         # tsc (compile to dist/)
 ```
 
