@@ -39,7 +39,7 @@
     "@types/node": "^26.0.0",
     "@types/sql.js": "^1.4.11",
     "eslint": "^10.5.0",
-    "prettier": "^3.8.4",
+    "prettier": "^3.9.1",
     "tsx": "^4.19.4",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.61.1"
